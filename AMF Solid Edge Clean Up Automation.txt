@@ -1,0 +1,447 @@
+AMF Solid Edge Clean Up Automation
+
+-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x
+Input and expected Output from Automation
+
+Inputs => 
+	1) Excel to input Serial Numbers
+Outputs = >
+	1) **Summary Report** in Excel for overall cycle (Columns like - Serial Number, Download Status, Status in Bluestar, Revision in Bluestar, Standard BOM Status, 2D Draft Status, Move to Working folder Status, Checkpoint-1 Status, Checkpoint-2 Status, Checkpoint-3 Status, Checkpoint-4 Status, Checkpoint-5 Status, Checkpoint-6 Status, Checkpoint-7 Status, STEP Available, timestamp of completion)
+	2) **Cleanup report** for serial number in respective second last working folder (Columns like - BOM Level Depth, Occurrence path, Part number, Title, Category, Included in Standard BOM, Electrical Component, Action Taken, Reason, Need review or manual intervention)
+	3) Cleaned STEP file from 3D CAD file for serial number in respective second last working folder
+
+-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x
+
+Solid Edge to STEP Export Checklist
+
+Checkpoint-1 :- Show All in 3D CAD file
+Use "Show all" or "show" feature on Top-level assembly, All Subassemblies, All Parts, All Components, All Nested/sub-level assemblies to show all hidden things if any 
+
+Checkpoint-2 :- Make sure there are no missing files in CAD file
+Check all missing files to repaire through "Repaire Missing Files" Feature available under "Inspect" Module in solid Edge
+Make sure all missing parts are replaced in CAD file to proceed further in cleaning process.
+Checkpoint-3 :- Make sure model orientation should be Z-axis = UP
+
+Checkpoint-4 :- Make sure  correct display/style and Organize Part Colors are applied through "Use Part Style"
+Apply the required “part/display style” to the top-level assembly.
+Do not change the physical geometry or dimensions.
+
+Checkpoint-5 :- Hide components according to Comparison of the CAD assembly against the standard BOM, 2D Draft File and Occurrence Property
+Hide assemblies, parts, and components that are **not required according to the standard BOM**.
+Standard BOM is only First Level of BOM and does not include Not for All Nested/sub-level assemblies in CAD file
+Hide components that do not have a valid occurrence/part reference
+Optional  - Reverify Hide components from 2D Draft file (Components that need to hide will be in dash lines)
+Identify and preserve electrical components - Electrical components should be **identified separately before applying the generic hide rules**.
+If an electrical component is hidden by the previous filtering logic but should be part of the final model.
+If classification is ambiguous, flag the component rather than making an unsafe assumption.
+Checkpoint-6 :- Clean up overall CAD assembly or part file before export
+Suppress or hide unnecessary components (reference Planes, Sketches, Co-ordinate systems, PMI) from "Show/Hide All Components"
+
+Checkpoint-7 :- Export the cleaned model in STEP file format/Extension
+
+-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x
+
+Continuous Step-By-Step process from Process-1 to Process-2 for each serial numbers
+
+Process 1 - Download CAD and relevant Files from Bluestar PLM
+
+Intent / Purpose =>
+This is standard process for Download 3D CAD files from Bluestar PLM given by the customer for Process 2 - Machine Clean Up and STEP Export in Solid Edge.
+Bluestar PLM is client file repository where client has stored all machine Solid Edge 3D models, 2D Drafts and BOM.
+Download below main files required for Process-2
+	1) Machine 3D CAD File (.ASM)
+	2) Machine Standard BOM (EXCEL)
+	3) 2D Draft (PDF)
+
+Standard Process =>
+STEP-1 :- Check Global Protect VPN is connected
+This is important step to download full 3D CAD file without any interruption and missing files.
+Make sure Global Protect VPN is connected throughout the process-1.
+Check Global Protect VPN connection status continuously throughout the process. If it is disconnected due to any interruption, Reconnect it immediately to continue downloading.
+
+STEP-2 :- Check serial numbers 
+Verify entered serial numbers for downloading.
+Sort internally for duplication or incorrect and mark its status accordingly in summary and avoid moving them in further process to save time. Only new distinct serial numbers will proceed for next steps.
+
+STEP-3 :- Open Bluestar PLM
+
+3.1 - Open new tab in chrome 
+3.2 - Enter Bluestar PLC URL "https://amf.operations.dynamics.com/?cmp=ausa&mi=BlueStar_ProductListPage"
+
+STEP-4 :- Search for serial number
+
+4.1 - Enter serial in search box/Filter with * in starting & ending of serial number
+	Example :- *22158-1000ME*
+4.2 - Select "Object ID" from Pop-up and consider entries with exact serial numbers only without any suffix or prefix.
+4.3 - Select "Latest Revisions" From revision and approval filter
+	It will load latest revision of serial number
+4.4 - Check approval status of latest revision.
+4.5 - Download if latest revision is "Approved".
+4.5 -  If Latest revision is not approved, Select "All Approved Revisions" From revision and approval filter
+4.6 -  Check if any Approved revision is available and download latest approved revision if available.
+4.7 - If any entry is not available for "All Approved Revisions" with approved status, Go back to "Latest Revisions" and download latest revision as fallback with "Design" or any other  status.
+4.8 - If still entry is not available under "All Approved Revisions" in revision and approval filter, Try selecting "All" From revision and approval filter, still entry is not available even after selecting "All", Mark that serial number as "Not Available in Bluestar" 
+
+STEP-5 :- Download Solid Edge 3D CAD file
+
+5.1 - To initial Downloading Solid Edge 3D CAD file for Selected revision from STEP-4, Select "Check Out"
+5.2 - Select Yes, If "This revision has been approved and cannot be modified. You will not be able to check in any changes to this revision. Do you want to continue?" pop-up occurs.
+5.3 - It will open Check Out Pop-up.
+5.4 - Add location Path in Checkout to for each serial number to download in distinct folder.
+	Default Path will be "c:\myloadpoint\" . Add Serial number twice which are being downloaded after default path. this will create two folders(One inside other) for this serial number in c:\myloadpoint 
+		Example :- c:\myloadpoint\22158-1000ME\22158-1000ME
+		Which will download 3D CAD file in last folder and second last folder will be utilise in next STEPS(BOM & 2D Draft Storage)
+5.5 - Click on "Check Out" from check out pop-up to start downloading.
+5.6 - Wait until full check out is completed or full Solid Edge 3D CAD file is downloaded in folder. 
+5.7 - If any pop-up occurs while waiting for download, Accept by clicking proper response 
+	Example :- The operation is taking a long time to process, click Wait to keep waiting for it to complete = Click on "Wait" Button	
+			Are you still there ? = Click on "I'm here" Button
+			Any other bluestar generated pop-up, response "yes", "Ok" or appropriate option to continue downloading without any interruption
+
+STEP-6 :- Download 2D Draft file
+
+6.1 - Look for availability of 2D Draft File in "File info" under Related section
+6.2 - If "PDF" is available in File type column, Select entry with same file name and "PDF" as file type
+6.3 - Click on "Export File" button, it will pop-up "Select export directory"
+6.4 - Select second last folder in Select Destination Folder and click on "OK" to start export.
+	Example :- c:\myloadpoint\22158-1000ME
+6.5 - Wait until 2D Draft gets exported/downloaded in respective folder.
+6.6 - If "PDF" is not available in File type column, Mention 2D draft is not available in reports.
+
+STEP-7 :- Download Standard BOM 
+
+7.1 - Click on "Lines" button under BOM section, it will navigate to BOM lines Home Page
+7.2 - Click on "Open Microsoft Office" Button, It will show small pop-up.
+7.3 - Select "BOM lines" in that Pop-up, It will show another Pop-up "Export to Excel"
+7.4 - It will Export/Download Standard BOM in EXCEL file format in downloads
+7.5 - Rename file name from random characters to serial number 
+	Example : Rename to "BOM lines_22158-1000ME" from "BOM lines_639275714742637961"
+7.6 - Move renamed Excel file(Standard BOM) to second last folder
+	Example :- c:\myloadpoint\22158-1000ME
+
+STEP-8 :- Create copy of this Main Folder in Working folder
+
+8.1 - As  c:\myloadpoint is Bluestar specific folder and always sync with its portal, Create copy of main file including 3D CAD file, 2D Draft file and Standard EXCEL BOM to "AMF 3D Files - For Working" folder in "Documents" of current logged in user.
+8.2 - Make sure to zip specific folder in c:\myloadpoint and move zip folder to "AMF 3D Files - For Working" folder in "Documents"
+8.3 - Unzip folder in "AMF 3D Files - For Working" folder in "Documents"
+8.4 - Delete zip folder in "AMF 3D Files - For Working" folder in "Documents" to optimize space in system
+8.5 - This Duplicate files will be utilis in "Process 2 - Machine Clean Up and STEP Export in Solid Edge" as it will not be synced to Bluestar through myloadpoint
+
+Process 2 - Machine Clean Up and STEP Export in Solid Edge
+
+Intent / Purpose =>
+This is standard process for exporting Solid Edge 3D models to STEP format for
+downstream use (e.g., sales and marketing collateral, rendering in KeyShot, sharing with external partners).
+It ensures models are clean, complete, properly structured, and optimized to avoid errors, missing
+geometry, or unnecessary file size. This process should be standard work by all engineering teams for all
+Product Families when product enters the Greenhouse stage.
+
+The goal is to clean up the SolidWorks 3D assembly according to the engineer-defined standard BOM, Checked all defined check points and export the cleaned model as a **STEP/STP file**.
+
+Standard Process =>
+
+STEP-1 :- Before making any changes initially check folder location and folder and required input files are available:
+	Identify which file is the standard BOM file (EXCEL)
+	Identify which file is the SolidWorks 3D CAD assembly file (.ASM)
+	Identify which file is 2D Draft file(PDF)
+
+STEP-2 :- Open Top Level assembly of serial number and inspect the 3D assembly in Solid Edge application
+Open the new CAD assembly from Respective folder and inspect its complete assembly structure.
+Determine:
+* Top-level assembly
+* Subassemblies
+* Parts
+* Components
+* Nested/sub-level assemblies
+* Suppressed/hidden components, if any
+* Component names, part numbers, configurations, and other available properties
+
+The goal is to understand the complete assembly hierarchy before starting actual clean-up.
+
+STEP-3 :- Show All in 3D CAD file (Checkpoint-1)
+
+Use "Show all" or "show" feature on Top-level assembly, All Subassemblies, All Parts, All Components, All Nested/sub-level assemblies to show all hidden things if any
+
+Make sure nested assemblies are considered, not just components directly under the top-level assembly.
+
+STEP-4 :- Check for missing file in CAD File (Checkpoint-2)
+
+4.1 - Check all missing files to repaire through "Repaire Missing Files" Feature available under "Inspect" Module in solid Edge
+4.2 - Note all missing parts, assemblies from CAD file
+4.3 - Replace all missing files one by one by using replace part feature in Repaire Missing Parts Pop-Up
+4.4 - Use STEP-3 to STEP-5 from Process 1 - Download CAD to download all missing files from Bluestar Portal as this process is similar.
+4.5 - Suppress relations if pop up occurs during replacing the part.
+4.6 - Make sure all missing parts are replaced in CAD file to proceed further in cleaning process.
+4.7 - Mention in reports, if any of the missing file is not available in Bluestar whiling searching.
+4.8 - If parts are not available in Bluestar, Ignore parts and assemblies lies in "No" in Occurrence Property and proceed with another missing part or clean up process.
+
+
+STEP-5 :- Open Occurrence Property for  Top Level assembly and inspect status of Report/Part list Column (Checkpoint-5)
+Open Occurrence Property for  Top Level assembly by right clicking and inspect status of Report/Part list Column for Top-level assembly, All Subassemblies, All Parts, All Components, All Nested/sub-level assemblies to utilise in further clean up.
+
+STEP-6 : - Check model orientation (Checkpoint-3)
+
+Check whether the 3D model is correctly oriented according to the required standard.
+
+Specifically verify whether the Z-axis is pointing upward.
+
+Expected orientation:
+Z = Up
+X/Y should represent the horizontal plane.
+
+If the model is not correctly oriented:
+
+* Determine the required rotation/orientation.
+
+Mention in report if orientation is found deflection in Orientation
+
+Do not arbitrarily rotate the model if the current orientation already satisfies the requirement.
+
+STEP-7 :- Select the correct display/style and Organize Part Colors through "Use Part Style" (Checkpoint-4)
+
+Apply the required **part/display style** to the top-level assembly.
+
+Make all motors in "RED" color through Face Style
+
+Do not change the physical geometry or dimensions.
+
+The purpose is only to control how the model is displayed/represented.
+
+STEP-8 :- Compare the CAD assembly against the standard BOM, 2D Draft and Occurrence Property (Checkpoint-5)
+
+Use the Standard BOM file as the **authoritative source** for the standard BOM.
+
+For every assembly, subassembly, part, and component in the CAD model:
+
+* Compare it against the engineer's standard BOM.
+* Identify components that are included in the standard BOM.
+* Identify components that are not included in the standard BOM.
+* Preserve components that are required by the standard BOM.
+* Do not delete geometry unless explicitly required.
+* Prefer hiding/excluding components rather than permanently deleting them.
+
+Create a clear internal mapping such as:
+
+CAD Component → Engineer BOM → Action
+-----------------------------------------
+Part A        → Present       → Keep
+Part B        → Present       → Keep
+Part C        → Not Present   → Hide
+Part D        → Not Present   → Hide
+Electrical E  → Electrical    → Unhide/Keep
+
+Please not that Standard BOM includes only first level Parts/sub-assemblies, Not for All Nested/sub-level assemblies in CAD file.
+
+Utilise status of Report/Part list Column of Occurrence Property form STEP-5 for All Nested/sub-level assemblies 
+
+Create a clear internal mapping such as:
+
+CAD Component → Occurrance Property → Action
+-----------------------------------------
+Part A        → Present       → Keep
+Part B        → Present       → Keep
+Part C        → Not Present   → Hide
+Part D        → Not Present   → Hide
+Electrical E  → Electrical    → Unhide/Keep
+
+Optional  - Reverify Hide components from 2D Draft file (Components that need to hide will be in dash lines)
+	Use Bubbles numbers to locate parts and BOM list for part refence in 2D Draft file
+
+STEP-9 :- Hide components according to the standard BOM (Checkpoint-5)
+
+Hide assemblies, parts, and components that are **not required according to the engineer-defined standard BOM**.
+
+Important:
+
+* Apply the rule recursively to nested subassemblies.
+* Check both assemblies and individual components.
+* Do not hide a component merely because its name differs slightly from the BOM.
+* Consider part number, component number, description, configuration, and other available metadata when matching.
+* If a component cannot be confidently matched, flag it for review instead of blindly hiding it.
+
+The objective is to produce a cleaned model containing the components required by the standard BOM.
+
+STEP-10 :- Hide components that do not have a valid occurrence/part reference (Checkpoint-5)
+
+Inspect the relevant **report / part / occurrence properties** available in the CAD model.
+
+Identify assemblies, parts, and components that have:
+
+* No corresponding part in the report
+* No valid occurrence
+* Missing/empty occurrence property
+* Missing/empty part reference
+* No valid mapping to the expected part structure
+
+Hide these components from the final model.
+
+However:
+
+**Do not hide electrical components just because they do not match the normal mechanical part/occurrence logic.**
+
+Electrical components must be handled separately as described below.
+
+STEP-11 :- Identify and preserve electrical components (Checkpoint-5)
+
+Identify electrical components, including:
+
+* Electrical assemblies
+* Electrical parts
+* Electrical components
+* Connectors
+* Electrical enclosures
+* Electrical devices
+* Wiring-related components
+* Other components that are clearly electrical in nature
+
+Electrical components should be **identified separately before applying the generic hide rules**.
+
+If an electrical component is hidden by the previous filtering logic but should be part of the final model:
+
+* Unhide it.
+* Keep it visible in the cleaned model.
+
+Do not remove electrical components simply because they do not include in a normal mechanical BOM/occurrence relationship.
+
+Use available information such as:
+
+* Component name
+* Part number
+* Description
+* Configuration
+* Folder/assembly structure
+* Component properties
+* Electrical classification
+* Naming conventions
+
+to identify electrical components.
+
+If classification is ambiguous, flag the component rather than making an unsafe assumption.
+
+STEP-12 :- Final model validation (Checkpoint-6)
+
+After all hiding/unhiding operations:
+
+Verify the final model against the following checklist:
+
+### Orientation
+
+* [ ] Z-axis is pointing upward.
+* [ ] Model orientation is correct.
+
+### Assembly structure
+
+* [ ] Top-level assembly is correct.
+* [ ] Sub-level assemblies were inspected.
+* [ ] Nested assemblies were processed.
+
+### BOM
+
+* [ ] Standard BOM components are retained.
+* [ ] Non-standard BOM components are hidden.
+* [ ] Components without valid occurrence/part references are hidden where appropriate.
+* [ ] Electrical components are preserved.
+
+### Geometry
+
+* [ ] No unintended geometry modifications were made.
+* [ ] No required components were accidentally removed.
+* [ ] Assembly relationships remain intact.
+
+### Display
+
+* [ ] Required top-level assembly display/part style is applied.
+* [ ] Only intended components remain visible.
+
+Also, Verify the final model against Solid Edge to STEP Export Checklist. make Sure all check points are covered before proceeding to Final cleaned model export in STEP file format/Extension. 
+
+STEP-13 :- Clean up your assembly or part file before export (Checkpoint-6)
+
+13.1 - Right click on empty space in view port and select "Show/Hide All Components"
+13.2 - It will show "Show/Hide Components" pop-up for whole 3D
+13.3 - Suppress or hide unnecessary components (reference Planes, Sketches, Co-ordinate systems, PMI).
+13.4 - Click Apply and Okay
+
+STEP-14 :- Export the cleaned model in STEP file format/Extension (Checkpoint-7)
+
+After validation, export the cleaned assembly as:
+STEP (.step / .stp)
+Use a same filename as serial number
+	Example :- 22158-1000ME
+
+Go to File → Save As and In the “Save as type” dropdown, select STEP (*.stp or *.step).
+Save the STEP file in to second last folder unless another output location is specified.
+	Example :- c:\myloadpoint\22158-1000ME
+
+-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x
+
+Common Instructions and Guidelines :-
+
+1) Perform Step-By-Step process mentioned for the all main steps in order. Don't move to next main STEP unstill confirmation flag is received/completed from current STEP.
+2) If any operation cannot be performed automatically because of Bluestar and SolidWorks/API limitations, clearly report:
+
+* What could not be performed
+* Why it could not be performed
+* Which components were affected
+* What manual action is required
+
+
+3) Do not permanently delete CAD components unless explicitly required.
+   Prefer hiding/excluding them.
+
+3) The engineer's standard BOM is the primary reference for mechanical component filtering.
+
+4) Electrical components must be treated separately and preserved when appropriate.
+
+5) Process nested/sub-level assemblies recursively.
+
+6) Do not make assumptions when component matching is ambiguous.
+   Flag ambiguous components for Manual review.
+
+7) Do not modify the actual geometry, dimensions, or design intent.
+
+8) Provide a summary similar to:
+
+```text
+Input CAD file:
+<filename>
+
+Engineer BOM/reference:
+<filename>
+
+Top-level assembly:
+<assembly name>
+
+Orientation:
+Z-up: PASS/FAIL
+
+Components analyzed:
+XX
+
+Components retained:
+XX
+
+Components hidden:
+XX
+
+Components hidden due to missing occurrence/part:
+XX
+
+Electrical components identified:
+XX
+
+Electrical components retained/unhidden:
+XX
+
+Ambiguous components requiring review:
+XX
+
+Final cleaned STEP Ready:
+YES/NN
+
+9) Make sure to add Main steps as Flags and should be tracked during process and after process as well to track and identify particular process status passed or fail or with error on Application UI as well as downloadable report from application for particular serial number as well as cycle for group of serial numbers feed in group. Keep all history for future refence of user.
+10) All process should be happen on screen and visible to user to track and monitor full process.
+14) Make it user friendly. Identify and add necessary ones if missed to mention in prompt. 
+15) It should be perfect to directly deploy in production environment without bugs and errors.
+16) Create User Manual, Basic Troubleshoot and Steps to run.
+

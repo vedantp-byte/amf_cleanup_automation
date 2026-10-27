@@ -1,0 +1,77 @@
+# =============================================================================
+#  AMF Solid Edge Clean Up Automation - configuration
+#  Normally you do NOT need to change anything here. Just drop a fresh
+#  machine_ids.xlsx next to main.py and run:  python main.py
+# =============================================================================
+
+input:
+  machine_ids_file: machine_ids.xlsx          # relative to this folder (or absolute path)
+  # First matching header is used. If none match, the first column is used.
+  serial_column_candidates: [machine_serials, machine_serial, SR_NO, serial_number, serial, machine_id, machine_ids]
+  # Skip serials that already completed successfully in an earlier cycle
+  # (STEP-2 "only new distinct serial numbers proceed"). Use --force to override.
+  skip_already_completed: true
+
+paths:
+  myloadpoint: 'C:\myloadpoint'                       # Bluestar check-out root
+  working_folder_name: 'AMF 3D Files - For Working'   # created inside current user's Documents
+  documents_folder: ''                                # blank = current user's Documents (auto)
+  downloads_folder: ''                                # blank = current user's Downloads (auto)
+  reports_folder: reports                             # summary reports + history
+  browser_profile: browser_profile                    # Chrome profile used by the automation (keeps Bluestar login)
+
+vpn:                                   # Process-1 STEP-1 (most important)
+  enabled: true
+  adapter_description: PANGP           # GlobalProtect virtual adapter description contains this text
+  check_interval_seconds: 15           # background monitor interval
+  auto_reconnect: true                 # try clicking "Connect" in the GlobalProtect panel
+  globalprotect_exe: 'C:\Program Files\Palo Alto Networks\GlobalProtect\PanGPA.exe'
+  reconnect_timeout_seconds: 120       # wait this long after the auto "Connect" click
+  manual_wait_minutes: 15              # then wait this long for the user to connect manually
+  check_host: ''                       # optional extra reachability test, e.g. 'amf.operations.dynamics.com:443'
+
+bluestar:
+  url: 'https://amf.operations.dynamics.com/?cmp=ausa&mi=BlueStar_ProductListPage'
+  client_exe: 'C:\Program Files\Bluestar5\Client\BlueStarClientServices.exe'   # started automatically if not running
+  login_timeout_minutes: 10            # first run: time allowed to sign in inside the automation browser
+  action_timeout_seconds: 60           # max wait for a page element / Bluestar response
+  checkout:
+    cad_system: SolidEdge              # "Select CAD system" pop-up choice
+    force_full_checkout: true
+    download_timeout_minutes: 180      # max time for one full 3D CAD check out
+    stable_seconds: 90                 # folder must stop changing for this long = download complete
+    no_activity_minutes: 10            # no file activity at all after check out -> stop waiting
+    retries: 1                         # re-run check out once if VPN dropped during download
+  download_2d_draft: true
+  download_bom: true
+  export_wait_minutes: 10              # 2D draft export / BOM export max wait
+
+working_copy:
+  clear_readonly: true                 # working copy is local only -> allow Solid Edge to save it
+  backup_existing: true                # rename an existing working folder instead of overwriting it
+
+solidedge:
+  enabled: true
+  close_document_after_serial: true
+  save_cleaned_assembly: true          # save the cleaned .asm in the WORKING copy (never in myloadpoint)
+  apply_part_style_recursive: false    # false = "Use Part Style" on top-level occurrences (as in the manual process)
+  motor_face_style: Red                # Face style used for motors (Checkpoint-4)
+  download_missing_from_bluestar: true # Checkpoint-2: fetch missing files from Bluestar automatically
+  use_2d_draft_crosscheck: true        # optional re-verification against the 2D draft PDF text
+  orientation_tolerance: 1.0           # Z extent may be up to this factor of max(X,Y) and still pass
+  step_file_extension: .stp
+
+classification:
+  # Words are matched on whole words (case-insensitive) in name, file name, title,
+  # category, keywords and parent assembly names.
+  motor_keywords: [MOTOR, GEARMOTOR, GEAR MOTOR, MOTORREDUCER, SERVOMOTOR, SERVO MOTOR, MTR, GEARBOX MOTOR]
+  electrical_keywords_strong:
+    [ELECTRICAL, ELEC, ELECT, CABLE, CABLES, WIRE, WIRES, WIRING, HARNESS, CONNECTOR, CONNECTORS,
+     ENCLOSURE, JUNCTION BOX, JBOX, J-BOX, CONTROL PANEL, ELECTRICAL PANEL, SENSOR, SENSORS,
+     PROXIMITY, PROX, PHOTOEYE, PHOTO EYE, PHOTOCELL, ENCODER, E-STOP, ESTOP, EMERGENCY STOP,
+     PUSHBUTTON, PUSH BUTTON, SELECTOR SWITCH, LIMIT SWITCH, SAFETY SWITCH, INTERLOCK, VFD,
+     INVERTER, SERVO DRIVE, PLC, HMI, TERMINAL, TERMINALS, CONDUIT, CORD GRIP, CABLE GLAND,
+     STACK LIGHT, STACKLIGHT, BEACON, SOLENOID, RELAY, CONTACTOR, CIRCUIT BREAKER, DISCONNECT,
+     TRANSFORMER, POWER SUPPLY, CABLE TRAY, WIREWAY, RECEPTACLE, LIGHT CURTAIN, OPERATOR STATION]
+  electrical_keywords_weak: [SWITCH, LIGHT, LAMP, PANEL, DRIVE, CONTROL, CONTROLS, POWER, CABINET, MOTOR, FAN, HEATER, BOX]
+  electrical_categories: [ELEC, ELECTRICAL]

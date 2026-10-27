@@ -1,13 +1,13 @@
 """Process 1 - Download CAD and relevant files from Bluestar PLM (STEP-1 ... STEP-8) for one serial."""
 
 from .bluestar.bom import download_bom
-from .bluestar.checkout import checkout_selected
+from .bluestar.checkout import checkout_selected, find_top_asm
 from .bluestar.client import ensure_running as ensure_client_running
 from .bluestar.draft import download_2d_draft
 from .bluestar.search import choose_revision, reselect
 from .models import PROCESS1_STEPS, SerialRecord
 from .tracker import StepFailed
-from .utils import human_size
+from .utils import folder_snapshot, human_size
 from .working_copy import make_working_copy
 
 
@@ -45,16 +45,23 @@ def run_process1(rec: SerialRecord, cfg: dict, tracker, vpn, bs, log) -> bool:
                 rec.add_manual(f"No approved revision in Bluestar - downloaded rev {row.revision} ({row.status})")
 
         with tracker.step(rec, "P1.S5", "Check out (download) Solid Edge 3D CAD") as st:
-            vpn.ensure_connected("before check out")
-            reselect(bs, sn, row, label)
-            result = checkout_selected(bs, cad_folder, sn)
-            rec.set(download_status="Downloaded", cad_status="success", cad_file=str(result["top_file"]),
-                    files_downloaded=result["files"], download_size=human_size(result["size"]))
-            msg = f"{result['files']} files, {human_size(result['size'])} -> {cad_folder}"
-            if result["vpn_interrupted"]:
-                st.warn(msg + " (VPN was interrupted during download - verify missing files in Process 2)")
+            existing = find_top_asm(cad_folder, sn)
+            if bs.bcfg["checkout"].get("reuse_existing") and existing:
+                count, size, _ = folder_snapshot(cad_folder)
+                rec.set(download_status="Downloaded (reused)", cad_status="success", cad_file=str(existing),
+                        files_downloaded=count, download_size=human_size(size))
+                st.ok(f"Existing download reused ({count} files) - check out skipped (--reuse-download)")
             else:
-                st.ok(msg)
+                vpn.ensure_connected("before check out")
+                reselect(bs, sn, row, label)
+                result = checkout_selected(bs, cad_folder, sn)
+                rec.set(download_status="Downloaded", cad_status="success", cad_file=str(result["top_file"]),
+                        files_downloaded=result["files"], download_size=human_size(result["size"]))
+                msg = f"{result['files']} files, {human_size(result['size'])} -> {cad_folder}"
+                if result["vpn_interrupted"]:
+                    st.warn(msg + " (VPN was interrupted during download - verify missing files in Process 2)")
+                else:
+                    st.ok(msg)
 
         with tracker.step(rec, "P1.S6", "Download 2D Draft (PDF)", critical=False) as st:
             if not bs.bcfg["download_2d_draft"]:

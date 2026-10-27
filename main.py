@@ -10,6 +10,7 @@ Options:
     python main.py --only process1          only download from Bluestar (STEP-1..8)
     python main.py --only process2          only Solid Edge clean up of existing working folders
     python main.py --force                  also re-run serials that already succeeded earlier
+    python main.py --reuse-download         skip the 3D check-out if the CAD is already in C:\\myloadpoint
 """
 
 import argparse
@@ -28,6 +29,8 @@ def parse_args(argv=None):
     p.add_argument("--only", choices=["process1", "process2"], help="run only one process")
     p.add_argument("--force", action="store_true", help="re-run serials already completed in earlier cycles")
     p.add_argument("--check", action="store_true", help="environment self-check only")
+    p.add_argument("--reuse-download", action="store_true",
+                   help="skip the 3D CAD check-out when C:\\myloadpoint\\SN\\SN\\SN.asm already exists")
     return p.parse_args(argv)
 
 
@@ -39,6 +42,9 @@ def main(argv=None) -> int:
     except Exception as e:
         log.error(f"Config error: {e}")
         return 2
+
+    if args.reuse_download:
+        cfg["bluestar"]["checkout"]["reuse_existing"] = True
 
     if args.check:
         from amf_automation.selfcheck import run_selfcheck

@@ -10,19 +10,33 @@ from ..utils import wait_file_stable
 from . import selectors as S
 
 
-def download_2d_draft(bs, serial: str, dest: Path) -> tuple[str, Path | None, str]:
-    """Returns (status, pdf_path, message). status: Downloaded / Not available / Failed."""
-    bs.click_button(S.BTN_FILE_INFO, tab=S.ENGINEERING_TAB, control=S.CTRL_FILE_INFO)   # 6.1
+def _read_files(bs) -> list[dict]:
     end = time.time() + bs.bcfg["action_timeout_seconds"]
-    rows = []
     while time.time() < end:
         rows = bs.read_grid(S.GRID_HEADER_FILE_TYPE)
         if rows:
-            break
+            return rows
         time.sleep(1)
+    return []
+
+
+def _select_file_row(bs, file_name: str) -> bool:
+    """Scroll the File info grid until the row is drawn, then click it (6.2)."""
+    for _ in range(15):
+        for r in bs.read_grid(S.GRID_HEADER_FILE_TYPE):
+            if r.get(S.COL_FILE_NAME, "").strip().upper() == file_name.upper() and bs.row_visible(r["_index"]):
+                bs.click_grid_cell(r["_index"], S.COL_FILE_NAME, S.COL_FILE_TYPE)
+                return True
+        bs.scroll_grid(250)
+    return False
+
+
+def download_2d_draft(bs, serial: str, dest: Path) -> tuple[str, Path | None, str]:
+    """Returns (status, pdf_path, message). status: Downloaded / Not available / Failed."""
+    bs.click_button(S.BTN_FILE_INFO, tab=S.ENGINEERING_TAB, control=S.CTRL_FILE_INFO)   # 6.1
     try:
-        files = [(r.get(S.COL_FILE_NAME, ""), r.get(S.COL_FILE_TYPE, "")) for r in rows]
-        bs.log.info(f"      File info: {', '.join(f for f, _ in files) or 'no files listed'}")
+        rows = _read_files(bs)
+        bs.log.info(f"      File info: {', '.join(r.get(S.COL_FILE_NAME, '') for r in rows) or 'no files listed'}")
 
         pdfs = [r for r in rows if r.get(S.COL_FILE_TYPE, "").strip().lower() == "pdf"]
         if not pdfs:                                                     # 6.6
@@ -32,7 +46,8 @@ def download_2d_draft(bs, serial: str, dest: Path) -> tuple[str, Path | None, st
         name = row.get(S.COL_FILE_NAME, "") or f"{serial}.PDF"
         note = "" if same_name else f"PDF name differs from serial ({name})"
 
-        bs.click_grid_cell(row["_index"], S.COL_FILE_TYPE)              # 6.2
+        if not _select_file_row(bs, name):                               # 6.2
+            raise StepFailed(f"Could not select '{name}' in the File info grid")
         bs.click_button(S.BTN_EXPORT_FILE)                              # 6.3
         dest.mkdir(parents=True, exist_ok=True)
         if not (bs.fill_labeled(S.EXPORT_FOLDER_LABEL, str(dest))       # 6.4
@@ -56,10 +71,15 @@ def download_2d_draft(bs, serial: str, dest: Path) -> tuple[str, Path | None, st
             bs.dismiss_popups(aggressive=False)
             time.sleep(2)
         return "Failed", None, f"PDF not found in {dest} after export. " + bs.message_bar_text()
+    except Exception:
+        shot = bs.screenshot(f"{serial}_2D_draft_error")             # evidence BEFORE leaving the page
+        if shot:
+            bs.log.info(f"      screenshot of error screen: {shot}")
+        raise
     finally:
         try:
             if bs.is_visible_text(S.OPEN_FILE_QUESTION):
                 bs.click_button("No", last=True)
-        except PwError:
+        except (PwError, StepFailed):
             pass
         bs.go_back()

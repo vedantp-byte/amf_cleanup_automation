@@ -301,11 +301,41 @@ class BluestarSession:
                 self.dismiss_popups()
                 time.sleep(1)
             else:
+                self.log.info(f"      Visible buttons: {self.visible_button_names()}")
                 raise StepFailed(f"Button '{name}' not found on the Bluestar page")
         if not btn.is_enabled():
             raise StepFailed(f"Button '{name}' is disabled in Bluestar")
         btn.click()
         self.wait_idle()
+
+    def visible_button_names(self, limit: int = 60) -> list[str]:
+        """Diagnostics: texts of the visible buttons (written to the log when a button is missing)."""
+        try:
+            return self.page.evaluate(r"""(limit) => Array.from(document.querySelectorAll('button, [role=button], [role=menuitem]'))
+                .filter(e => e.offsetParent).map(e => ((e.innerText || e.getAttribute('aria-label') || '')
+                .trim().replace(/\s+/g, ' ') + (e.getAttribute('data-dyn-controlname') ? ' [' + e.getAttribute('data-dyn-controlname') + ']' : '')))
+                .filter(t => t).slice(0, limit)""", limit)
+        except PwError:
+            return []
+
+    def row_visible(self, row_index: int) -> bool:
+        cells = self.page.locator(f'[data-amf-grid] [data-amf-row="{row_index}"] [role="gridcell"]')
+        try:
+            return cells.filter(visible=True).count() > 0
+        except PwError:
+            return False
+
+    def scroll_grid(self, delta: int = 250):
+        """Scroll the tagged grid vertically (Bluestar grids only draw the rows in view)."""
+        grid = self.page.locator("[data-amf-grid]").first
+        try:
+            box = grid.bounding_box()
+            if box:
+                self.page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.7)
+                self.page.mouse.wheel(0, delta)
+                time.sleep(0.8)
+        except PwError:
+            pass
 
     def open_tab(self, name: str):
         for loc in (self.page.get_by_role("tab", name=name, exact=True),
@@ -320,9 +350,9 @@ class BluestarSession:
                 continue
 
     def is_visible_text(self, text) -> bool:
+        """True if ANY element with this text is visible (Bluestar keeps hidden copies in the page)."""
         try:
-            loc = self.page.get_by_text(text)
-            return loc.count() > 0 and loc.first.is_visible()
+            return self.page.get_by_text(text).filter(visible=True).count() > 0
         except PwError:
             return False
 
@@ -337,12 +367,32 @@ class BluestarSession:
                 rows.append(r)
         return rows
 
-    def click_grid_cell(self, row_index: int, column: str):
-        """Select a grid row by clicking one of its (non-link) cells."""
-        cell = self.page.locator(f'[data-amf-grid] [data-amf-row="{row_index}"] [data-amf-col="{column}"]')
-        if not cell.count():
-            cell = self.page.locator(f'[data-amf-grid] [data-amf-row="{row_index}"] [role="gridcell"]').last
-        cell.first.click()
+    def click_grid_cell(self, row_index: int, column: str, *alternatives: str):
+        """Select a grid row by clicking one of its visible, non-link cells.
+
+        Bluestar grids do not draw columns that are scrolled out of view horizontally,
+        so the preferred column may be invisible -> fall back to any visible cell.
+        """
+        row = self.page.locator(f'[data-amf-grid] [data-amf-row="{row_index}"]').first
+        try:
+            row.scroll_into_view_if_needed(timeout=5000)
+        except PwError:
+            pass
+        target = None
+        for col in (column, *alternatives):
+            cell = row.locator(f'[data-amf-col="{col}"]')
+            try:
+                if cell.count() and cell.first.is_visible():
+                    target = cell.first
+                    break
+            except PwError:
+                continue
+        if target is None:
+            cells = row.locator('[role="gridcell"]').filter(visible=True).filter(has_not=self.page.locator("a"))
+            if not cells.count():
+                raise StepFailed(f"No visible cell to select grid row {row_index}")
+            target = cells.nth(1) if cells.count() > 1 else cells.first   # skip the tick-box column
+        target.click()
         time.sleep(1)
         self.wait_idle()
 

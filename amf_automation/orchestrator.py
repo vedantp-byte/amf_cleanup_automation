@@ -7,7 +7,7 @@ from .input_reader import completed_serials, read_serials, validate_serials
 from .logger import add_file_handler, banner
 from .models import PROCESS1_STEPS, PROCESS2_STEPS, SerialRecord, Status, StepFlag
 from .process1 import run_process1
-from .process2 import Process2
+from .process2 import Process2, interlock
 from .reports.summary import write_history, write_summary
 from .solidedge.app import SolidEdgeApp
 from .tracker import CycleAbort, RunContext, Tracker, load_history
@@ -87,8 +87,18 @@ class Orchestrator:
                 ok1 = run_process1(rec, self.cfg, self.tracker, self.vpn, self.bs, self.log)
 
             if ok1 and self.only != "process1" and self.cfg["solidedge"]["enabled"]:
-                banner(self.log, f"Process 2 - Solid Edge clean up  |  {rec.serial}", "-")
-                process2.run(rec)
+                work = Path(rec.data.get("working_folder") or (self.cfg["resolved"]["working_root"] / rec.serial))
+                problems = interlock(rec, work, process1_ran=self.only != "process2")
+                if problems:                     # interlock: no clean-up without Standard BOM + 3D CAD
+                    reason = "; ".join(problems)
+                    self.log.error(f"  !! Process 2 NOT started for {rec.serial} (interlock): {reason}")
+                    rec.set(p2_status="BLOCKED", step_available="NO",
+                            error=f"Process 2 not started (interlock): {reason}")
+                    rec.add_manual(f"Process 2 not started: {reason} - download it in Bluestar and run again")
+                    self.tracker.skip_remaining(rec, PROCESS2_STEPS, f"Interlock: {reason}")
+                else:
+                    banner(self.log, f"Process 2 - Solid Edge clean up  |  {rec.serial}", "-")
+                    process2.run(rec)
             elif not ok1:
                 self.tracker.skip_remaining(rec, PROCESS2_STEPS, "Process 1 not completed")
         except CycleAbort as e:
@@ -158,7 +168,9 @@ class Orchestrator:
         d.update(timestamp=iso(rec.finished), duration_min=round(dur, 1))
         if rec.manual_actions:
             d["manual_action"] = " | ".join(rec.manual_actions[:15])
-        if d.get("p1_status") == "FAIL" or d.get("p2_status") == "FAIL":
+        if d.get("p2_status") == "BLOCKED":
+            d["overall_status"] = "STOPPED - INTERLOCK"
+        elif d.get("p1_status") == "FAIL" or d.get("p2_status") == "FAIL":
             d["overall_status"] = "FAILED"
         elif self.only == "process1" or not self.cfg["solidedge"]["enabled"]:
             d["overall_status"] = "PROCESS 1 DONE" if d.get("p1_status") in ("PASS", "WARN") else "FAILED"
@@ -191,5 +203,6 @@ class Orchestrator:
         self.log.info(f"  Summary report : {self.summary_path}")
         self.log.info(f"  History        : {self.run.history_dir / 'summary_history.xlsx'}")
         self.log.info(f"  Log            : {self.run.run_dir / 'run.log'}")
-        failed = [r for r in self.run.records if r.data.get("overall_status") in ("FAILED", "NOT PROCESSED")]
+        failed = [r for r in self.run.records
+                  if r.data.get("overall_status") in ("FAILED", "NOT PROCESSED", "STOPPED - INTERLOCK")]
         return 1 if (failed or self.run.aborted_reason) else 0

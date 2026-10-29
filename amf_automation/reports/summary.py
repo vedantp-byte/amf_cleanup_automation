@@ -45,7 +45,15 @@ SUMMARY_COLUMNS = [
     ("Electrical Identified", "n_electrical"),
     ("Electrical Retained", "n_electrical_kept"),
     ("Electrical Unhidden (rule override)", "n_electrical_unhidden"),
-    ("Motors Coloured Red", "n_motors"),
+    ("Motors Identified", "n_motors"),
+    ("Motors Coloured Red", "n_motors_red"),
+    ("Motors Not Coloured", "n_motors_failed"),
+    ("Protected Components Kept", "n_protected_kept"),
+    ("Assemblies Hidden (Hide All)", "n_hide_all"),
+    ("Laser Sensor Parts", "n_laser_files"),
+    ("Laser Beams Removed", "n_laser_beams_removed"),
+    ("Laser Sensors Need Review", "n_laser_review"),
+    ("Laser Beam Removal Status", "laser_status"),
     ("Ambiguous - Need Review", "n_review"),
     ("Missing Files Found", "missing_found"),
     ("Missing Files Repaired", "missing_repaired"),
@@ -72,7 +80,7 @@ SUMMARY_COLUMNS = [
 STATUS_HEADERS = {"Download Status", "CAD Status", "Overall Status", "VPN Status",
                   "Status in Bluestar", "2D Draft Status", "Standard BOM Status",
                   "Move to Working Folder Status", "Process 1 Status", "Process 2 Status", "Z-up Orientation",
-                  "STEP Available", "Input Validation"} | {h for h, _ in SUMMARY_COLUMNS if h.startswith("Checkpoint")}
+                  "STEP Available", "Input Validation", "Laser Beam Removal Status"} | {h for h, _ in SUMMARY_COLUMNS if h.startswith("Checkpoint")}
 
 
 def record_row(rec: SerialRecord) -> list:

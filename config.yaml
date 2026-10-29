@@ -60,11 +60,49 @@ solidedge:
   use_2d_draft_crosscheck: true        # optional re-verification against the 2D draft PDF text
   orientation_tolerance: 1.0           # Z extent may be up to this factor of max(X,Y) and still pass
   step_file_extension: .stp
+  remove_laser_beams: true             # open laser sensor parts and delete the laser beam geometry
+  laser_backup_folder: _laser_backup   # original part files are copied here (inside the working folder) first
 
 classification:
   # Words are matched on whole words (case-insensitive) in name, file name, title,
   # category, keywords and parent assembly names.
-  motor_keywords: [MOTOR, GEARMOTOR, GEAR MOTOR, MOTORREDUCER, SERVOMOTOR, SERVO MOTOR, MTR, GEARBOX MOTOR]
+  # ---- Motors (Checkpoint-4). The leading noun of the title (text before the first comma)
+  # decides, e.g. "GMT-DR 2HP, 230/460-60, 76.37:1" -> motor, "MOTOR MOUNT, SEW" -> not a motor.
+  motor_keywords: [MOTOR, GEARMOTOR, GEAR MOTOR, GEARED MOTOR, GEAR-MOTOR, MOTORREDUCER, MOTOR REDUCER,
+                   SERVOMOTOR, SERVO MOTOR, SERVO MTR, SERVO, BRAKEMOTOR, BRAKE MOTOR, MTR, GMT, GMT-DR,
+                   GEARBOX MOTOR]
+  motor_exclude_words: [MOUNT, MOUNTING, BRACKET, PLATE, KIT, COVER, HOOD, GUARD, SEAL, BASE, ADAPTER, SPACER,
+                        CABLE, CORD, SHIM, KEY, COUPLING, HUB, ARM, PULLEY, BELT, CHAIN, BUSHING, SPROCKET, STAND,
+                        SUPPORT, DECAL, LABEL, BOX, SKID, SHAFT, CONTROLLER, STARTER, PROTECTOR, BREAKER, FUSE,
+                        CONNECTOR, TERMINAL, SENSOR, ENCODER, CLAMP, WASHER, SCREW, BOLT, HARNESS, PLUG, OVERLOAD,
+                        DISCONNECT, VFD, INVERTER, MOTOR DRIVE, MOTOR CONTROL, BRAKE PAD, SPACER, TORQUE ARM]
+  motor_categories: [MOTORS]           # exact category names that hold motors (used with a power rating / no title)
+  motor_part_numbers: []               # part numbers that are always motors (without extension)
+
+  # ---- Protected components: never hidden by any cleanup rule (BOM, Reports/Parts List, ...)
+  protected_categories: [SAFETY, STICKER, DECAL, NAMEPLATE, LABEL, ENCLOSURE, OPERATOR INTERFACE, ENCODER,
+                         FASTENER, HARDWARE, SENSOR, PHOTO]   # category CONTAINS one of these
+  protected_keywords: [SAFETY, DECAL, DECALS, STICKER, LABEL, LABELS, NAMEPLATE, WARNING, CAUTION, DANGER,
+                       ENCLOSURE, ENCL, OPERATOR INTERFACE, HMI, OI, ENCODER, RESOLVER, BOLT, BOLTS, EYEBOLT,
+                       EYE BOLT, CAPSCREW, CAP SCREW, SCREW, SCREWS, NUT, NUTS, LOCKNUT, WASHER, WASHERS, STUD,
+                       RIVET, FASTENER, FASTENERS, ANCHOR, BELT, BELTS, REFLECTOR]   # leading noun of the title contains one of these
+  # Sensor related parts and explicit phrases: matched ANYWHERE in the title (also sensor mounts / brackets)
+  protected_title_words: ['MOUNT, PHOTOSWITCH', PHOTOSWITCH, PHOTO SWITCH, PHOTOEYE, PHOTO EYE, PHOTOCELL,
+                          PHOTOELECTRIC, SENSOR, SENSORS, PROX, PROXIMITY, REFLECTOR, LIGHT CURTAIN, RIGHTSIGHT,
+                          LASER PE, ENCODER]
+  protected_exclude_words: [BEARING, GUIDE, SHAFT, ROLLER, BOLT-ON]
+  protect_inside_hidden_assemblies: false   # true = keep protected children visible inside an assembly that is hidden
+
+  # ---- Laser sensors (laser beam removal)
+  laser_part_numbers: ['66135', '602317']   # confirmed laser sensors, always checked
+  laser_keywords: [LASER]
+  laser_sensor_words: [PE, PHOTOEYE, PHOTO EYE, PHOTOELECTRIC, SENSOR, DIFFUSE, RETRO, RETROREFLECTIVE, SCANNER,
+                       DISTANCE, MEASURING, LIGHT BARRIER, LIGHT CURTAIN, SWITCH, DETECTOR, OPTICAL, BARRIER]
+  laser_sensor_categories: [SENSOR, PHOTO]
+  laser_exclude_words: [MOUNT, BRACKET, REFLECTOR, GUARD, CABLE, CORD, COVER, PLATE, HOLDER, CLAMP, DECAL, LABEL,
+                        CONNECTOR, SHIELD, PROTECTOR, STAND, ARM]
+  laser_beam_keywords: [BEAM, LASERBEAM, LASER BEAM, LASERSTRAHL, STRAHL, LICHTSTRAHL, LIGHT BEAM, LIGHTBEAM, RAY,
+                        LASER RAY, LASER LINE, LASERLINE, LASER SPOT, LIGHT SPOT, LICHTFLECK, LASERPOINT, LASER POINT]
   electrical_keywords_strong:
     [ELECTRICAL, ELEC, ELECT, CABLE, CABLES, WIRE, WIRES, WIRING, HARNESS, CONNECTOR, CONNECTORS,
      ENCLOSURE, JUNCTION BOX, JBOX, J-BOX, CONTROL PANEL, ELECTRICAL PANEL, SENSOR, SENSORS,

@@ -48,14 +48,18 @@ Run `python main.py --check` at any time to verify the setup. It checks the pack
 | P2.S4 | Checkpoint‑2 | Finds missing files, downloads them from Bluestar using the same search and revision rules, and repairs or replaces them. A file that isn't in Bluestar and has *Reports/Parts List = No* is ignored (rule 4.8); any other unrepaired file is reported for manual action. |
 | P2.S5 | Occurrence Properties | Reads *Reports/Parts List* for every occurrence. |
 | P2.S6 | Checkpoint‑3 | Checks Z-up from the model's extents. **The model is never rotated automatically**; any deviation is reported. |
-| P2.S7 | Checkpoint‑4 | Applies *Use Part Style* to the top-level occurrences and colours motors red. |
-| P2.S8–S11 | Checkpoint‑5 | First level is compared with the Standard BOM: in the BOM → Keep, not in the BOM → Hide, uncertain match → Keep and flag for review. Nested levels follow *Reports/Parts List*: Yes → Keep, No → Hide. Missing files are hidden. Electrical components are identified first and kept even if a rule would hide them; "possible" electrical items are flagged instead of guessed. The 2D draft text is used as an extra cross-check. Nothing is deleted; components are only hidden. |
+| P2.S7 | Checkpoint‑4 | Applies *Use Part Style* to the top-level occurrences. Then finds every motor at every level from the main noun of its title (GMT, GMT-DR, MOTOR, GEARMOTOR, SERVO, SERVO MTR…). Accessories such as MOTOR MOUNT, MOTOR KIT, SEAL KIT and covers are ignored. A power rating plus a Motors category also counts. Each motor gets a **red Face Override**, which is read back to verify. A motor inside a motor assembly is covered by the assembly's override. Any motor that fails is listed in the report. |
+| P2.S8–S11 | Checkpoint‑5 | First level is compared with the Standard BOM: in the BOM → Keep, not in the BOM → Hide, uncertain match → Keep and flag for review. Nested levels follow *Reports/Parts List*: Yes → Keep, No → Hide. Missing files are hidden. An assembly that must be hidden gets **Hide All**: the assembly and every child are hidden, verified, and its children are not checked further. Electrical components are identified first and kept even if a rule would hide them; "possible" electrical items are flagged instead of guessed. The 2D draft text is used as an extra cross-check. Components are only hidden, never deleted. |
+| P2.S11A | Protected components | Safety items, safety stickers / decals / labels / nameplates, enclosures, operator interfaces / HMI, encoders / resolvers, bolts, nuts, screws, washers, studs, fasteners, hardware, belts and reflectors are **never hidden** by a cleanup rule. The same applies to **sensor-related parts**: anything with category Sensors / Photo, or with PHOTOSWITCH, "MOUNT, PHOTOSWITCH", PHOTOEYE / PHOTO EYE, SENSOR, PROX, REFLECTOR or LIGHT CURTAIN anywhere in the title. That includes sensor mounts and brackets. Children of a protected assembly inherit this. Exception: when a whole assembly is hidden with Hide All, its bolts and labels go with it. Set `protect_inside_hidden_assemblies: true` to keep them visible instead. |
+| P2.S11B | Laser beams | Checks the known laser sensors **66135.par** and **602317.par** and finds other laser sensors (title has LASER and a sensor word such as PE / SENSOR / DIFFUSE; mounts, brackets and reflectors are ignored). Each sensor part is opened separately. Only features or bodies named like a beam (BEAM, LASERSTRAHL, RAY, LIGHT BEAM…) are deleted. The tool checks that the sensor body is still there, then saves. The original part is backed up to `_laser_backup` first. Only working-folder files are changed, never `C:\myloadpoint`. If no beam can be clearly identified, the part is not changed and is listed for review. |
 | P2.S12 | Checkpoint‑6 validation | Runs the full checklist (orientation, structure, BOM, geometry, display) and re-reads the visibility of every occurrence. |
 | P2.S13 | Checkpoint‑6 clean up | Hides reference planes, sketches, coordinate systems, and PMI. |
 | P2.S14 | Checkpoint‑7 | Saves the cleaned ASM (working copy only) and exports `SN.stp`. |
 | P2.S15 | Report | Writes `Cleanup_Report_SN.xlsx`. |
 
 If a critical step fails, the remaining steps for that serial are marked SKIPPED and the tool moves on to the next serial.
+
+**Interlock before Process 2.** The clean-up depends on the Standard BOM and the 3D CAD, so Process 2 only starts when this run downloaded the **Standard BOM** (with at least one line) and the **3D CAD (.asm)**. If either is missing, Process 2 is not started: its steps are marked SKIPPED with the reason, and the serial is reported as **STOPPED - INTERLOCK**. Download the missing file and run the serial again. The 2D Draft is optional; if it's missing you only get a warning.
 
 ## 4. Outputs
 
@@ -76,11 +80,19 @@ If a critical step fails, the remaining steps for that serial are marked SKIPPED
 **Cleanup report sheets**
 - *Summary*: the standard summary block (input CAD, BOM, Z-up, components analysed / retained / hidden, electrical, ambiguous, STEP ready).
 - *Components*: BOM level depth, occurrence path, part number, title, category, included in Standard BOM, Reports/Parts List, electrical, action taken, reason, and whether review is needed.
+- *Motors*: every motor occurrence, why it was identified, and the Face Override result.
+- *Laser Sensors*: each sensor part, how it was identified, and the result (beam removed / no beam identified / not present).
 - *Missing Files*, *Checkpoints*, *Validation Checklist*.
+- *BOM Comparison* (last sheet): compares the Standard BOM with the **top-level occurrences** of the 3D CAD (Occurrence Properties). Parts inside subassemblies are not counted. Each item gets a status:
+  - **Missing in 3D CAD**: in the BOM, not in the CAD → add the part to the CAD file.
+  - **Extra in 3D CAD**: in the CAD, not in the BOM → hide the part.
+  - **Quantity Mismatch** or **Match**.
+
+  The sheet shows expected / actual quantity, *Total Quantity Missing* (+ missing in CAD, − extra in CAD), part names, BOM position and revision. A summary and legend are on the right.
 - *Manual Actions*: what could not be done, why, which components are affected, and what to do.
 
 **Status values:** PASS = done · WARN = done but needs a look · FAIL = step failed · SKIPPED = not run.
-Overall status: **SUCCESS**, **SUCCESS - REVIEW** (STEP exported, open the Manual Actions sheet), **FAILED**, **SKIPPED - …** (duplicate / invalid / already done), or **NOT PROCESSED** (the cycle was stopped).
+Overall status: **SUCCESS**, **SUCCESS - REVIEW** (STEP exported, open the Manual Actions sheet), **FAILED**, **STOPPED - INTERLOCK** (Standard BOM or 3D CAD not downloaded, so Process 2 was not started), **SKIPPED - …** (duplicate / invalid / already done), or **NOT PROCESSED** (the cycle was stopped).
 
 ## 5. Options
 
@@ -110,6 +122,10 @@ All settings are in `config.yaml`: folders, timeouts, VPN behaviour, the motor f
 | Solid Edge does not start or open the file | Open Solid Edge manually once (license or first-start dialogs), then run `python main.py --only process2 --serials <SN>`. |
 | STEP still contains hidden parts | In Solid Edge go to *Save As → STEP → Options* and make sure hidden parts are not exported. The setting is remembered. |
 | Many "possible electrical" review items | Adjust `classification` keywords in `config.yaml`. |
+| A motor is not found / a non-motor is coloured | Add its part number to `motor_part_numbers`, or a word to `motor_keywords` / `motor_exclude_words` in `config.yaml`. |
+| A component that should stay visible is hidden (or the reverse) | Adjust `protected_categories` / `protected_keywords` / `protected_exclude_words`. |
+| Laser beam "No beam identified" | Open the part. If the beam feature has a different name, add that word to `laser_beam_keywords`. Otherwise delete it by hand. The report lists the part's feature names. |
+| Undo a laser beam removal | Copy the original from `<working folder>\SN\_laser_backup\` back over the part. |
 | Orientation REVIEW / FAIL | Check the model in Solid Edge. The tool only reports; it never rotates. |
 
 ## 7. Notes

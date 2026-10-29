@@ -8,6 +8,7 @@ from .bluestar.item import download_item
 from .models import PROCESS2_STEPS, SerialRecord, Status
 from .reports.cleanup import write_cleanup_report
 from .solidedge import checkpoints as cp
+from .solidedge.app import call0
 from .solidedge.classifier import Classifier, summarize
 from .solidedge.model import PropertyCache, build_tree, part_number, tree_stats
 from .solidedge.references import read_draft_tokens, read_standard_bom
@@ -28,6 +29,38 @@ def _flag_to_cp(*flags) -> str:
     return "PASS"
 
 
+def find_standard_bom(work: Path) -> Path | None:
+    return next((p for p in work.glob("*.xlsx") if "bom" in p.name.lower()), None)
+
+
+def interlock(rec: SerialRecord, work: Path, process1_ran: bool) -> list[str]:
+    """Process 2 may only start when the Standard BOM and the 3D CAD were downloaded.
+    Returns the list of blocking problems (empty = OK). The 2D Draft is optional."""
+    from .bluestar.bom import count_bom_lines
+    sn = rec.serial
+    problems = []
+    if process1_ran and not str(rec.data.get("download_status", "")).startswith("Downloaded"):
+        problems.append(f"3D CAD not downloaded ({rec.data.get('download_status') or 'unknown'})")
+    elif find_top_asm(work / sn, sn) is None:
+        problems.append(f"3D CAD {sn}.asm not found in {work / sn}")
+    bom_status = str(rec.data.get("bom_status", ""))
+    bom = find_standard_bom(work) if work.exists() else None
+    if process1_ran and bom_status != "Downloaded":
+        problems.append(f"Standard BOM not downloaded ({bom_status or 'unknown'})")
+    elif bom is None:
+        problems.append(f"Standard BOM (BOM lines_{sn}.xlsx) not found in {work}")
+    elif count_bom_lines(bom) <= 0:
+        problems.append(f"Standard BOM {bom.name} has no lines")
+    return problems
+
+
+def _inside(path: Path, folder: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(folder.resolve())
+    except (OSError, ValueError):
+        return False
+
+
 class Process2:
     def __init__(self, cfg: dict, tracker, se, bs_provider, log):
         self.cfg = cfg
@@ -45,7 +78,7 @@ class Process2:
         work = Path(rec.data.get("working_folder") or (self.cfg["resolved"]["working_root"] / sn))
         asm_dir = work / sn
         r = {"serial": sn, "nodes": [], "missing_rows": [], "checkpoint_rows": [], "validation_rows": [],
-             "manual_rows": [], "asm": None, "bom": None, "pdf": None, "orientation": ("", ""),
+             "manual_rows": [], "laser_rows": [], "asm": None, "bom": None, "pdf": None, "orientation": ("", ""),
              "bom_lines": None, "step": None}
         doc = None
         ok = False
@@ -60,12 +93,14 @@ class Process2:
                         asm = asms[0]
                     else:
                         st.fail(f"Top-level assembly {sn}.asm not found in {asm_dir}")
-                bom = next((p for p in work.glob("*.xlsx") if "bom" in p.name.lower()), None)
+                bom = find_standard_bom(work)
                 pdfs = [p for p in work.glob("*") if p.suffix.lower() == ".pdf"]
                 pdf = next((p for p in pdfs if p.stem.upper() == sn.upper()), pdfs[0] if pdfs else None)
                 r.update(asm=asm, bom=bom, pdf=pdf)
-                msg = f"ASM={asm.name} | BOM={bom.name if bom else 'MISSING'} | PDF={pdf.name if pdf else 'MISSING'}"
-                st.warn(msg) if (bom is None or pdf is None) else st.ok(msg)
+                msg = f"ASM={asm.name} | BOM={bom.name if bom else 'MISSING'} | PDF={pdf.name if pdf else 'MISSING (optional)'}"
+                if bom is None:                 # clean-up depends on the Standard BOM
+                    st.fail("Standard BOM missing - clean-up not possible. " + msg)
+                st.warn(msg) if pdf is None else st.ok(msg)
 
             # ---------------------------------------------------------- STEP-2
             with t.step(rec, "P2.S2", "Open & inspect top-level assembly") as st:
@@ -116,13 +151,21 @@ class Process2:
             with t.step(rec, "P2.S7", "Checkpoint-4: Use Part Style + motors red", critical=False) as st:
                 self.classifier.classify_motors(nodes)
                 done, errs = cp.use_part_style(nodes, bool(self.scfg["apply_part_style_recursive"]))
-                m_done, m_errs = cp.color_motors(doc, nodes, self.scfg["motor_face_style"])
-                n_mot = sum(1 for n in nodes if n.motor)
-                msg = f"Use Part Style on {done} occurrence(s); motors red {m_done}/{n_mot}"
+                motors = [n for n in nodes if n.motor]
+                for n in motors:
+                    st.info(f"Motor: {n.path}  ({n.motor_reason})")
+                m_done, m_errs = cp.color_motors(self.se, doc, nodes, self.scfg["motor_face_style"])
+                rec.set(n_motors=len(motors), n_motors_red=m_done, n_motors_failed=len(motors) - m_done)
+                msg = (f"Use Part Style on {done} occurrence(s); {len(motors)} motor(s) identified, "
+                       f"{m_done} red (verified)")
+                if errs:
+                    self._manual(r, "Use Part Style incomplete", "Solid Edge style change failed", errs,
+                                 "Select top-level assembly > View > Face Overrides > (Use Part Style)")
+                if m_errs:
+                    self._manual(r, "Motor not coloured red", "Face override could not be applied / verified",
+                                 m_errs, "Select the motor > View > Face Overrides > Red")
                 if errs or m_errs:
                     st.warn(msg + f"; {len(errs) + len(m_errs)} error(s)")
-                    self._manual(r, "Part style / motor colour incomplete", "Solid Edge style change failed",
-                                 errs + m_errs, "Apply (Use Part Style) / Red face style manually")
                 else:
                     st.ok(msg)
 
@@ -154,6 +197,25 @@ class Process2:
                 msg = (f"{sums['n_electrical']} electrical identified ({possible} possible), "
                        f"{sums['n_electrical_unhidden']} preserved against hide rules")
                 st.warn(msg) if possible else st.ok(msg)
+
+            with t.step(rec, "P2.S11A", "Checkpoint-5: Keep protected components "
+                                        "(safety / labels / fasteners / enclosures / OI / encoders)") as st:
+                self._apply(st, r, nodes, {"protected"}, "protected rule")
+                sums = summarize(nodes)
+                rec.set(**sums)
+                hidden_prot = [n.path for n in nodes if n.protected and n.expected_visible is False
+                               and n.action != "Hidden via parent" and not n.file_missing and not n.laser_beam]
+                msg = (f"{sums['n_protected']} protected component(s) identified, {sums['n_protected_kept']} kept "
+                       f"visible against hide rules, {sums['n_hide_all']} assembly(ies) hidden with Hide All")
+                if hidden_prot:
+                    st.warn(msg + f"; {len(hidden_prot)} protected still hidden")
+                    self._manual(r, "Protected component hidden", "Rule conflict", hidden_prot,
+                                 "Show these components manually")
+                else:
+                    st.ok(msg)
+
+            with t.step(rec, "P2.S11B", "Laser sensors: remove laser beam", critical=False) as st:
+                self._lasers(rec, r, doc, nodes, work, st)
 
             # ---------------------------------------------------------- STEP-12 / CP-6
             with t.step(rec, "P2.S12", "Checkpoint-6: Final model validation", critical=False) as st:
@@ -272,6 +334,85 @@ class Process2:
             r["checkpoint_rows"].append(["Checkpoint-2", "Repair Missing Files", "PASS", detail])
         return nodes
 
+    def _lasers(self, rec, r, doc, nodes, work: Path, st):
+        """Known laser sensors (66135 / 602317) + discovered ones: delete the beam in each sensor part."""
+        c = self.cfg["classification"]
+        lasers = [n for n in nodes if n.laser in ("Known", "Yes")]
+        possible = [n for n in nodes if n.laser == "Possible"]
+        for n in possible:
+            n.review = (n.review + "; " if n.review else "") + f"Possible laser sensor ({n.laser_reason}) - verify beam"
+
+        changed, errs = cp.apply_visibility(nodes, {"laser"})       # beam occurrences inside sensor assemblies
+        beam_occ = [n for n in nodes if n.laser_beam]
+        if errs:
+            self._manual(r, "Laser beam occurrence not hidden", "Visibility change failed", errs,
+                         "Hide the laser beam occurrence manually")
+
+        found_pns = {n.part_number.lstrip("0") for n in lasers if n.laser == "Known"}
+        for pn in c.get("laser_part_numbers", []):
+            if str(pn).lstrip("0").upper() not in found_pns:
+                r["laser_rows"].append([f"{pn}.par", 0, "Known laser sensor", "-", "Not present in this assembly", ""])
+
+        groups: dict[str, list] = {}
+        for n in lasers:
+            groups.setdefault((n.file or n.name).lower(), []).append(n)
+        backup_dir = work / self.scfg["laser_backup_folder"]
+        removed, review = 0, []
+        for _key, grp in groups.items():
+            rep = grp[0]
+            path = Path(rep.file)
+            visible = [n for n in grp if not n.effectively_hidden]
+            res = {"status": "", "message": "", "features": []}
+            if not self.scfg["remove_laser_beams"]:
+                res["status"] = "Skipped - disabled in config"
+            elif not visible:
+                res["status"] = "Skipped - all occurrences hidden (not exported)"
+            elif rep.is_assembly:
+                inside = [b for b in beam_occ if rep in b.ancestors()]
+                res["status"] = (f"Sensor assembly - {len(inside)} beam occurrence(s) hidden" if inside
+                                 else "No beam identified")
+                res["message"] = "; ".join(b.name for b in inside)
+            elif not _inside(path, work):
+                res["status"] = "Skipped - part not in working folder"
+                res["message"] = f"{path} is outside {work}; C:\\myloadpoint files are never modified"
+            elif not path.exists():
+                res["status"] = "FAILED"
+                res["message"] = f"Part file not found: {path}"
+            else:
+                st.info(f"Laser sensor {path.name} ({rep.laser_reason}) - opening part to remove the beam ...")
+                res = cp.remove_laser_beam(self.se, path, self.classifier.is_beam_name, backup_dir)
+            if res["status"] == "Beam removed":
+                removed += 1
+            elif res["status"] in ("No beam identified", "FAILED") or res["status"].startswith("Skipped - part"):
+                review.append(f"{path.name}: {res['status']}")
+                for n in visible:
+                    n.review = (n.review + "; " if n.review else "") + f"Laser beam not removed ({res['status']})"
+            for n in grp:
+                n.laser_status = res["status"]
+            extra = f" | features: {', '.join(res.get('features', [])[:15])}" if res["status"] == "No beam identified" else ""
+            r["laser_rows"].append([path.name, len(grp), f"{rep.laser} ({rep.laser_reason})",
+                                    rep.title, res["status"], (res.get("message") or "") + extra])
+        for n in possible:
+            r["laser_rows"].append([Path(n.file).name, 1, f"Possible ({n.laser_reason})", n.title,
+                                    "Not modified - review", n.path])
+        try:
+            doc.Activate()
+            call0(doc, "UpdateAll")
+        except Exception:
+            pass
+
+        rec.set(n_laser=len(lasers), n_laser_files=len(groups), n_laser_beams_removed=removed,
+                n_laser_review=len(review) + len(possible))
+        msg = (f"{len(groups)} laser sensor part(s) ({len(lasers)} occurrence(s)), {removed} beam(s) removed, "
+               f"{len(beam_occ)} beam occurrence(s) hidden, {len(possible)} possible laser sensor(s)")
+        if review:
+            self._manual(r, "Laser beam not removed", "Beam could not be identified safely / part not editable",
+                         review, "Open the sensor part, delete the laser beam feature, save")
+        if review or possible or errs:
+            st.warn(msg)
+        else:
+            st.ok(msg)
+
     def _references(self, r):
         notes, bom_lines, tokens = [], None, None
         if r["bom"]:
@@ -307,12 +448,19 @@ class Process2:
         bad = cp.verify_visibility(nodes)
         style_flag = rec.steps.get("P2.S7")
         style_ok = style_flag is not None and style_flag.status == Status.PASS
+        prot_hidden = [n.path for n in nodes if n.protected and not n.expected_visible
+                       and n.action != "Hidden via parent" and not n.file_missing and not n.laser_beam]
+        hide_all_bad = [n.path for n in nodes if n.action == "Hidden via parent" and n.path in bad]
+        laser_bad = [n.path for n in nodes if n.laser in ("Known", "Yes") and not n.effectively_hidden
+                     and n.laser_status not in ("Beam removed", "") and not n.laser_status.startswith("Sensor assembly")
+                     and not n.laser_status.startswith("Skipped - all")]
         sums = summarize(nodes)
         orient = r["orientation"][0]
         missing_left = [n.path for n in nodes if n.file_missing and n.include_in_bom is not False]
         lvl1 = [n for n in nodes if n.level == 1]
         bom_kept = all(n.expected_visible for n in lvl1 if n.in_bom == "Yes")
-        nonbom_hidden = all(not n.expected_visible or n.rule == "electrical" for n in lvl1 if n.in_bom == "No")
+        nonbom_hidden = all(not n.expected_visible or n.rule in ("electrical", "protected") or n.action.startswith("Partial")
+                            for n in lvl1 if n.in_bom == "No")
         elec_ok = all(not n.effectively_hidden for n in nodes if n.electrical == "Yes" and not n.file_missing
                       and n.action != "Hidden via parent")
         checks = [
@@ -328,9 +476,11 @@ class Process2:
             ("BOM", "Electrical components are preserved", "PASS" if elec_ok else "WARN",
              f"{sums['n_electrical_kept']} electrical visible"),
             ("Geometry", "No unintended geometry modifications", "PASS",
-             "Only visibility / display style changed (no delete, no move)"),
+             "Only visibility / display style changed, no move"
+             + (f"; laser beam geometry deleted in {rec.data.get('n_laser_beams_removed', 0)} sensor part(s) "
+                "(originals backed up)" if rec.data.get("n_laser_beams_removed") else "")),
             ("Geometry", "No required components accidentally removed", "PASS" if not missing_left else "WARN",
-             "Nothing deleted" + (f"; {len(missing_left)} required file(s) still missing" if missing_left else "")),
+             "No components deleted" + (f"; {len(missing_left)} required file(s) still missing" if missing_left else "")),
             ("Geometry", "Assembly relationships remain intact", "PASS", "No relationship edits performed"),
             ("Display", "Top-level part style applied", "PASS" if style_ok else "WARN",
              style_flag.message if style_flag else ""),
@@ -338,6 +488,18 @@ class Process2:
              f"{len(bad)} visibility mismatch(es)" if bad else "all visibility states verified"),
             ("Review", "Ambiguous components flagged for manual review", "WARN" if sums["n_review"] else "PASS",
              f"{sums['n_review']} component(s)"),
+            ("Display", "Every identified motor is red (Face Override)",
+             "PASS" if not sums["n_motors_failed"] else "FAIL",
+             f"{sums['n_motors_red']}/{sums['n_motors']} motor occurrence(s) red"),
+            ("BOM", "Protected components not hidden by cleanup rules",
+             "PASS" if not prot_hidden else "FAIL",
+             f"{sums['n_protected_kept']} kept against hide rules" + (f"; {len(prot_hidden)} hidden" if prot_hidden else "")),
+            ("Assembly structure", "Hidden assemblies fully hidden (Hide All)",
+             "PASS" if not hide_all_bad else "FAIL",
+             f"{sums['n_hide_all']} assembly(ies)" + (f"; {len(hide_all_bad)} child(ren) still visible" if hide_all_bad else "")),
+            ("Geometry", "Laser beams removed from laser sensors",
+             "PASS" if not laser_bad else "WARN",
+             f"{rec.data.get('n_laser_beams_removed', 0)} removed" + (f"; review: {len(laser_bad)}" if laser_bad else "")),
         ]
         r["validation_rows"] = [list(c) for c in checks]
         fails = [c for c in checks if c[2] == "FAIL"]
@@ -359,8 +521,10 @@ class Process2:
     def _finish_flags(self, rec):
         s = rec.steps.get
         rec.set(cp1=_flag_to_cp(s("P2.S3")), cp2=_flag_to_cp(s("P2.S4")), cp3=_flag_to_cp(s("P2.S6")),
-                cp4=_flag_to_cp(s("P2.S7")), cp5=_flag_to_cp(s("P2.S8"), s("P2.S9"), s("P2.S10"), s("P2.S11")),
-                cp6=_flag_to_cp(s("P2.S12"), s("P2.S13")), cp7=_flag_to_cp(s("P2.S14")))
+                cp4=_flag_to_cp(s("P2.S7")),
+                cp5=_flag_to_cp(s("P2.S8"), s("P2.S9"), s("P2.S10"), s("P2.S11"), s("P2.S11A")),
+                cp6=_flag_to_cp(s("P2.S12"), s("P2.S13")), cp7=_flag_to_cp(s("P2.S14")),
+                laser_status=_flag_to_cp(s("P2.S11B")))
 
     def _write_report(self, rec, r, path: Path):
         nodes = r["nodes"]
@@ -398,7 +562,13 @@ class Process2:
             ("Electrical components identified", d.get("n_electrical", 0)),
             ("Electrical components retained/unhidden", f"{d.get('n_electrical_kept', 0)} retained, "
                                                         f"{d.get('n_electrical_unhidden', 0)} unhidden"),
-            ("Motors coloured red", d.get("n_motors", 0)),
+            ("Motors identified / coloured red / failed",
+             f"{d.get('n_motors', 0)} / {d.get('n_motors_red', 0)} / {d.get('n_motors_failed', 0)}"),
+            ("Protected components identified / kept against hide rules",
+             f"{d.get('n_protected', 0)} / {d.get('n_protected_kept', 0)}"),
+            ("Assemblies hidden with Hide All", d.get("n_hide_all", 0)),
+            ("Laser sensor parts / beams removed / need review",
+             f"{d.get('n_laser_files', 0)} / {d.get('n_laser_beams_removed', 0)} / {d.get('n_laser_review', 0)}"),
             ("Ambiguous components requiring review", d.get("n_review", 0)),
             ("Missing files found / repaired / not in Bluestar",
              f"{d.get('missing_found', 0)} / {d.get('missing_repaired', 0)} / {d.get('missing_not_in_bluestar', 0)}"),
@@ -406,5 +576,15 @@ class Process2:
             ("STEP file", d.get("step_path", "")),
             ("Report created", iso(now())),
         ]
-        ctx = dict(r, nodes=nodes, summary_pairs=pairs)
+        motor_rows = [[n.level, n.path, n.part_number, n.title, n.category, n.motor_reason,
+                       n.motor_covered_by or "-", n.motor_status or "Not processed",
+                       "No" if n.motor_status.startswith("Red") else "Yes"] for n in nodes if n.motor]
+        bom_lines = r.get("bom_lines")
+        if bom_lines is None and r.get("bom"):
+            try:
+                bom_lines = read_standard_bom(r["bom"])
+            except Exception:
+                bom_lines = None
+        ctx = dict(r, nodes=nodes, summary_pairs=pairs, motor_rows=motor_rows, bom_lines=bom_lines,
+                   bom_name=r["bom"].name if r.get("bom") else "")
         write_cleanup_report(path, ctx)

@@ -38,6 +38,8 @@ PROCESS2_STEPS = [
     ("P2.S9", "Checkpoint-5: Hide components not in standard BOM"),
     ("P2.S10", "Checkpoint-5: Hide components without valid occurrence/part"),
     ("P2.S11", "Checkpoint-5: Identify & preserve electrical components"),
+    ("P2.S11A", "Checkpoint-5: Keep protected components (safety / labels / fasteners / enclosures / OI / encoders)"),
+    ("P2.S11B", "Laser sensors: remove laser beam"),
     ("P2.S12", "Checkpoint-6: Final model validation"),
     ("P2.S13", "Checkpoint-6: Hide planes / sketches / coord. systems / PMI"),
     ("P2.S14", "Checkpoint-7: Export STEP"),

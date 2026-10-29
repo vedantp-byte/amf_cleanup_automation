@@ -36,6 +36,7 @@ def revision_key(rev: str) -> tuple:
 
 def search_serial(bs, serial: str):
     """4.1/4.2: type *serial* in the filter and choose the 'Object ID' field."""
+    before = _grid_signature(bs)
     box = bs.filter_box()
     box.click()
     box.fill("")
@@ -48,6 +49,7 @@ def search_serial(bs, serial: str):
     except PwError:
         box.press("Enter")       # first entry of the pop-up is Object ID
     bs.wait_idle()
+    _wait_grid_refreshed(bs, before)
 
 
 def set_revision_filter(bs, label: str):
@@ -66,30 +68,60 @@ def set_revision_filter(bs, label: str):
     if combo is None:
         raise StepFailed("'Revision and approval filter' not found on the Bluestar page")
 
-    try:
-        current = (combo.input_value() or "").strip()
-    except PwError:
-        current = ""
-    if current.lower() == label.lower():
+    if _combo_value(combo).lower() == label.lower():
         return
 
-    combo.click()
-    time.sleep(0.8)
-    picked = False
-    for opt in (page.get_by_role("option", name=label, exact=True),
-                page.locator("li, [role='option'], .comboBox-listItem").get_by_text(label, exact=True)):
-        try:
-            if opt.count() and opt.first.is_visible():
-                opt.first.click()
-                picked = True
-                break
-        except PwError:
-            continue
-    if not picked:                           # type the value instead
-        combo.fill(label)
-        combo.press("Enter")
-    bs.wait_idle()
-    time.sleep(1)
+    before = _grid_signature(bs)
+    for _attempt in range(3):
+        combo.click()
+        time.sleep(0.8)
+        picked = False
+        for opt in (page.get_by_role("option", name=label, exact=True),
+                    page.locator("li, [role='option'], .comboBox-listItem").get_by_text(label, exact=True)):
+            try:
+                if opt.count() and opt.first.is_visible():
+                    opt.first.click()
+                    picked = True
+                    break
+            except PwError:
+                continue
+        if not picked:                           # type the value instead
+            combo.fill(label)
+            combo.press("Enter")
+        bs.wait_idle()
+        if _combo_value(combo).lower() == label.lower():
+            break
+        bs.log.info(f"      Revision filter shows '{_combo_value(combo)}' instead of '{label}' - retrying")
+    else:
+        raise StepFailed(f"Could not set 'Revision and approval filter' to '{label}'")
+    _wait_grid_refreshed(bs, before)
+
+
+def _combo_value(combo) -> str:
+    try:
+        return (combo.input_value() or "").strip()
+    except PwError:
+        return ""
+
+
+def _grid_signature(bs) -> tuple:
+    return tuple((r.get(S.COL_OBJECT_ID, ""), r.get(S.COL_REVISION, ""), r.get(S.COL_STATUS, ""))
+                 for r in bs.read_grid(S.GRID_HEADER_OBJECT_ID))
+
+
+def _wait_grid_refreshed(bs, before: tuple, timeout: float = 25):
+    """Bluestar reloads the grid a moment AFTER the filter changes. Reading too early returns the rows
+    of the previous filter, so wait until the rows changed and are stable, or are stable for ~4 s."""
+    end = time.time() + timeout
+    last, same = None, 0
+    while time.time() < end:
+        time.sleep(1)
+        sig = _grid_signature(bs)
+        same = same + 1 if sig == last else 0
+        last = sig
+        if (sig != before and same >= 1) or same >= 3:
+            return
+    bs.log.info("      Grid did not settle after the filter change; continuing with the current rows.")
 
 
 def exact_rows(bs, serial: str) -> list[BluestarRow]:
@@ -136,16 +168,17 @@ def choose_revision(bs, serial: str) -> tuple[BluestarRow | None, str]:
 
 
 def reselect(bs, serial: str, row: BluestarRow, label: str) -> BluestarRow:
-    """Make sure the chosen row is shown & selected (used before every action on it)."""
-    set_revision_filter(bs, label)
-    for r in exact_rows(bs, serial):
-        if r.revision == row.revision:
-            bs.click_grid_cell(r.index, S.COL_REVISION)
-            return r
-    search_serial(bs, serial)
-    set_revision_filter(bs, label)
-    for r in exact_rows(bs, serial):
-        if r.revision == row.revision:
-            bs.click_grid_cell(r.index, S.COL_REVISION)
-            return r
+    """Make sure the chosen row is shown & selected (used before every action on it).
+    Tries the filter it was found with first, then searches again, then the other filters."""
+    others = [x for x in (S.REV_ALL_APPROVED, S.REV_LATEST, S.REV_ALL) if x != label]
+    for attempt, lab in enumerate([label, label] + others):
+        if attempt == 1:
+            search_serial(bs, serial)
+        set_revision_filter(bs, lab)
+        for r in exact_rows(bs, serial):
+            if r.revision == row.revision:
+                bs.click_grid_cell(r.index, S.COL_REVISION, S.COL_STATUS, S.COL_OBJECT_NAME)
+                if lab != label:
+                    bs.log.info(f"      {serial} rev {row.revision} found under '{lab}'")
+                return r
     raise StepFailed(f"Could not re-select {serial} revision {row.revision} in Bluestar")

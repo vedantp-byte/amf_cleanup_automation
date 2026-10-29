@@ -48,6 +48,15 @@ class Node:
     electrical: str = "No"
     electrical_reason: str = ""
     motor: bool = False
+    motor_reason: str = ""
+    motor_covered_by: str = ""             # motor inside a motor assembly that is coloured as a whole
+    motor_status: str = ""
+    protected: bool = False
+    protected_reason: str = ""
+    laser: str = ""                         # "Known" / "Yes" / "Possible" laser sensor
+    laser_reason: str = ""
+    laser_beam: bool = False                # beam occurrence inside a laser sensor assembly
+    laser_status: str = ""
     action: str = ""
     rule: str = ""
     reason: str = ""
@@ -69,7 +78,14 @@ class Node:
 
     @property
     def expected_visible(self) -> bool:
-        return self.action.startswith("Keep")
+        return self.action.startswith(("Keep", "Partial"))
+
+    def descendants(self):
+        stack = list(reversed(self.children))
+        while stack:
+            n = stack.pop()
+            yield n
+            stack.extend(reversed(n.children))
 
     @property
     def effectively_hidden(self) -> bool:

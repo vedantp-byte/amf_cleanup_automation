@@ -20,14 +20,60 @@ def _read_files(bs) -> list[dict]:
     return []
 
 
+def _visible_cell(bs, row_index: int):
+    """First visible, non-link cell of a tagged File info row (file name preferred)."""
+    row = bs.page.locator(f'[data-amf-grid] [data-amf-row="{row_index}"]').first
+    for col in (S.COL_FILE_NAME, S.COL_FILE_TYPE):
+        cell = row.locator(f'[data-amf-col="{col}"]').first
+        try:
+            if cell.count() and cell.is_visible():
+                return cell
+        except PwError:
+            continue
+    cells = row.locator('[role="gridcell"]').filter(visible=True)
+    return cells.first if cells.count() else None
+
+
+def _click_top(cell) -> bool:
+    """Click the TOP edge of the cell with a short timeout. The last row of the File info grid is
+    often half covered by the grid's horizontal scrollbar; clicking its centre makes Playwright
+    scroll up/down for 60 s (the grid ignores scroll-into-view), so never retry long here."""
+    try:
+        box = cell.bounding_box()
+        y = 4 if not box else max(2, min(6, box["height"] / 4))
+        cell.click(position={"x": 12, "y": y}, timeout=4000)
+        return True
+    except PwError:
+        return False
+
+
 def _select_file_row(bs, file_name: str) -> bool:
-    """Scroll the File info grid until the row is drawn, then click it (6.2)."""
-    for _ in range(15):
-        for r in bs.read_grid(S.GRID_HEADER_FILE_TYPE):
-            if r.get(S.COL_FILE_NAME, "").strip().upper() == file_name.upper() and bs.row_visible(r["_index"]):
-                bs.click_grid_cell(r["_index"], S.COL_FILE_NAME, S.COL_FILE_TYPE)
+    """Bring the row into view (grid scrolled DOWN only - no up/down jitter), then click it (6.2)."""
+    target = file_name.upper()
+    for _attempt in range(8):
+        rows = bs.read_grid(S.GRID_HEADER_FILE_TYPE)
+        hit = next((r for r in rows if r.get(S.COL_FILE_NAME, "").strip().upper() == target), None)
+        if hit is not None and bs.row_visible(hit["_index"]):
+            cell = _visible_cell(bs, hit["_index"])
+            if cell is not None and _click_top(cell):
+                time.sleep(1)
+                bs.wait_idle()
                 return True
-        bs.scroll_grid(250)
+        bs.scroll_grid(400)                  # downwards only: the PDF is normally the last file
+    # last resort: select the first file row and move down to the target with the arrow keys
+    rows = bs.read_grid(S.GRID_HEADER_FILE_TYPE)
+    names = [r.get(S.COL_FILE_NAME, "").strip().upper() for r in rows]
+    if target in names and rows:
+        first = _visible_cell(bs, rows[0]["_index"])
+        if first is not None and _click_top(first):
+            time.sleep(0.5)
+            for _ in range(names.index(target)):
+                bs.page.keyboard.press("ArrowDown")
+                time.sleep(0.3)
+            time.sleep(1)
+            bs.wait_idle()
+            bs.log.info(f"      '{file_name}' selected with the arrow keys")
+            return True
     return False
 
 

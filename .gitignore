@@ -3,3 +3,5 @@
 /Process 1 - Download CAD Files from Bluestar PLM
 /.venv
 /browser_profile
+__pycache__/
+*.py[cod]

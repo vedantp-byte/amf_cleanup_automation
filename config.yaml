@@ -33,6 +33,9 @@ vpn:                                   # Process-1 STEP-1 (most important)
 bluestar:
   url: 'https://amf.operations.dynamics.com/?cmp=ausa&mi=BlueStar_ProductListPage'
   client_exe: 'C:\Program Files\Bluestar5\Client\BlueStarClientServices.exe'   # started automatically if not running
+  keep_chrome_open: true               # attach to the open Bluestar Chrome; start it once if closed, never close it
+  chrome_debug_port: 9222              # port used to attach (start_chrome.bat uses the same)
+  chrome_exe: ''                       # blank = auto-detect Google Chrome
   login_timeout_minutes: 10            # first run: time allowed to sign in inside the automation browser
   action_timeout_seconds: 60           # max wait for a page element / Bluestar response
   checkout:

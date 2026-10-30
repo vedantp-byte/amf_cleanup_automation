@@ -28,6 +28,8 @@ Serials that already succeeded in an earlier cycle are skipped automatically. To
 | Google Chrome, GlobalProtect, Solid Edge (with the Bluestar client) | already used for the manual process |
 | First Bluestar login | On the first run a separate Chrome window ("automation profile") opens. Sign in to Bluestar once; the login is remembered in the `browser_profile` folder. If Chrome asks to open **Bluestar Client Services**, tick *Always allow* and accept. |
 
+**Bluestar Chrome stays open.** The tool uses its own Chrome window (the "Bluestar Chrome") and leaves it open after every run. The next run attaches to that same window and reuses its Bluestar tab. You can also open this window yourself at any time with **`start_chrome.bat`**. If the window has been closed, the next run reopens it. Your personal Chrome can't be used, because Chrome blocks automation of the everyday profile. To switch back to the old behaviour (a new Chrome every run), set `keep_chrome_open: false` in `config.yaml`.
+
 Run `python main.py --check` at any time to verify the setup. It checks the packages, the input file, the VPN, Chrome, Solid Edge, folder write access, and free disk space.
 
 ## 3. What happens for each serial

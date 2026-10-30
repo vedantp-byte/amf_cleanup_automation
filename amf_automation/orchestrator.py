@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from .bluestar import BluestarSession
-from .input_reader import completed_serials, read_serials, validate_serials
+from .input_reader import clean_serial, completed_serials, read_serials, validate_serials
 from .logger import add_file_handler, banner
 from .models import PROCESS1_STEPS, PROCESS2_STEPS, SerialRecord, Status, StepFlag
 from .process1 import run_process1
@@ -137,10 +137,11 @@ class Orchestrator:
         raw, column = read_serials(self.input_file, self.cfg["input"]["serial_column_candidates"])
         self.log.info(f"  Serial column  : '{column}'  ({len(raw)} value(s))")
         if self.serial_filter:
-            raw = [(row, s) for row, s in raw if s.upper() in self.serial_filter]
+            wanted = {clean_serial(s).upper() for s in self.serial_filter}
+            raw = [(row, s) for row, s in raw if clean_serial(s).upper() in wanted]
         skip_done = self.cfg["input"]["skip_already_completed"] and not self.force
         done = completed_serials(load_history(self.run.history_dir)) if skip_done else {}
-        records = validate_serials(raw, done, skip_done)
+        records = validate_serials(raw, done, skip_done, self.log)
 
         for rec in records:          # P1.S2 flag for every input line
             flag = StepFlag("P1.S2", dict(PROCESS1_STEPS)["P1.S2"], started=now(), finished=now())

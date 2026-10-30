@@ -36,6 +36,9 @@ DEFAULTS = {
     "bluestar": {
         "url": "https://amf.operations.dynamics.com/?cmp=ausa&mi=BlueStar_ProductListPage",
         "client_exe": r"C:\Program Files\Bluestar5\Client\BlueStarClientServices.exe",
+        "keep_chrome_open": True,
+        "chrome_debug_port": 9222,
+        "chrome_exe": "",
         "login_timeout_minutes": 10,
         "action_timeout_seconds": 60,
         "checkout": {

@@ -1,8 +1,11 @@
 """Browser session for Bluestar PLM: start Chrome, login wait, pop-ups, grids, buttons."""
 
 import re
+import socket
+import subprocess
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.sync_api import Error as PwError
 from playwright.sync_api import TimeoutError as PwTimeout
@@ -85,6 +88,10 @@ class BluestarSession:
     def start(self):
         profile = self.cfg["resolved"]["browser_profile"]
         profile.mkdir(parents=True, exist_ok=True)
+        if self.bcfg.get("keep_chrome_open", True):
+            self._pw = sync_playwright().start()
+            self._attach_or_launch(profile)
+            return
         self.log.info("      Starting Chrome (automation profile) ...")
         self._pw = sync_playwright().start()
         kwargs = dict(user_data_dir=str(profile), headless=False, accept_downloads=True,
@@ -100,7 +107,76 @@ class BluestarSession:
         self.page = self.ctx.pages[0] if self.ctx.pages else self.ctx.new_page()
         self._install_handlers(self.page)
 
+    # ---- keep Chrome open: attach to the open Bluestar Chrome (CDP), or start it detached once
+    def _cdp_port(self) -> int:
+        return int(self.bcfg.get("chrome_debug_port", 9222))
+
+    def _port_open(self) -> bool:
+        try:
+            with socket.create_connection(("127.0.0.1", self._cdp_port()), timeout=1):
+                return True
+        except OSError:
+            return False
+
+    def _connect(self, wait_s: float = 0):
+        end = time.time() + wait_s
+        while True:
+            if self._port_open():
+                try:
+                    return self._pw.chromium.connect_over_cdp(f"http://127.0.0.1:{self._cdp_port()}", timeout=15_000)
+                except PwError:
+                    pass
+            if time.time() >= end:
+                return None
+            time.sleep(1)
+
+    def _chrome_exe(self) -> str:
+        cands = [self.bcfg.get("chrome_exe") or "",
+                 r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                 str(Path.home() / r"AppData\Local\Google\Chrome\Application\chrome.exe")]
+        exe = next((c for c in cands if c and Path(c).exists()), None)
+        if not exe:
+            raise StepFailed("Google Chrome not found (set bluestar.chrome_exe in config.yaml)")
+        return exe
+
+    def _launch_detached(self, profile: Path):
+        """Start the Bluestar Chrome as an independent process - it stays open after the run."""
+        subprocess.Popen(
+            [self._chrome_exe(), f"--remote-debugging-port={self._cdp_port()}", f"--user-data-dir={profile}",
+             "--start-maximized", "--no-first-run", "--no-default-browser-check", self.bcfg["url"]],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP, close_fds=True)
+
+    def _attach_or_launch(self, profile: Path):
+        browser = self._connect()
+        if browser is not None:
+            self.log.info("      Attached to the open Bluestar Chrome.")
+        else:
+            self.log.info("      Opening the Bluestar Chrome (it stays open after the run) ...")
+            self._launch_detached(profile)
+            browser = self._connect(wait_s=45)
+            if browser is None:
+                raise StepFailed(
+                    "Could not attach to the Bluestar Chrome. If a Bluestar Chrome window is open that was not "
+                    "started by the automation or start_chrome.bat, close it and run again.")
+        self._attached = True
+        self.ctx = browser.contexts[0] if browser.contexts else browser.new_context(accept_downloads=True)
+        self.ctx.set_default_timeout(self.timeout_ms)
+        host = urlparse(self.bcfg["url"]).netloc.lower()
+        self.page = next((p for p in self.ctx.pages if host in (p.url or "").lower()), None)  # reuse Bluestar tab
+        if self.page is None:
+            self.page = self.ctx.new_page()
+        self._install_handlers(self.page)
+
     def close(self):
+        if getattr(self, "_attached", False):        # leave Chrome and the Bluestar tab open, just disconnect
+            try:
+                self._pw and self._pw.stop()
+            except Exception:
+                pass
+            self.ctx = self._pw = self.page = None
+            self._attached = False
+            return
         for closer in (lambda: self.ctx and self.ctx.close(), lambda: self._pw and self._pw.stop()):
             try:
                 closer()

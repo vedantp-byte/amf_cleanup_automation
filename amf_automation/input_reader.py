@@ -7,7 +7,7 @@ import openpyxl
 
 from .models import SerialRecord
 
-_VALID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-_.!]{2,59}$")
+_VALID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-_.! ]{1,58}[A-Za-z0-9\-_.!]$")   # spaces allowed inside
 
 
 def _to_text(value) -> str:
@@ -61,16 +61,22 @@ def read_serials(path: Path, column_candidates: list[str]) -> tuple[list[tuple[i
     return out, col_name
 
 
-def validate_serials(raw: list[tuple[int, str]], completed: dict[str, str], skip_completed: bool) -> list[SerialRecord]:
+def clean_serial(text: str) -> str:
+    """Serial exactly as typed: only spaces before / after it are dropped.
+    Spaces INSIDE are kept ('20586-1000 ME' stays '20586-1000 ME')."""
+    return str(text or "").strip()
+
+
+def validate_serials(raw: list[tuple[int, str]], completed: dict[str, str], skip_completed: bool,
+                     log=None) -> list[SerialRecord]:
     """Mark Duplicate / Invalid / Already processed. Only 'Valid' records continue."""
     records, first_row = [], {}
     for row, text in raw:
-        serial = text.strip()
+        serial = clean_serial(text)
         rec = SerialRecord(serial=serial, row=row)
         key = serial.upper()
         if not _VALID.match(serial):
-            reason = "contains spaces" if " " in serial else "invalid characters or length"
-            rec.validation = f"Invalid ({reason})"
+            rec.validation = "Invalid (invalid characters or length)"
         elif key in first_row:
             rec.validation = f"Duplicate of row {first_row[key]}"
         elif skip_completed and key in completed:

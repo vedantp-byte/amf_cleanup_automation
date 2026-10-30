@@ -1,8 +1,11 @@
 """Browser session for Bluestar PLM: start Chrome, login wait, pop-ups, grids, buttons."""
 
 import re
+import socket
+import subprocess
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.sync_api import Error as PwError
 from playwright.sync_api import TimeoutError as PwTimeout
@@ -85,6 +88,10 @@ class BluestarSession:
     def start(self):
         profile = self.cfg["resolved"]["browser_profile"]
         profile.mkdir(parents=True, exist_ok=True)
+        if self.bcfg.get("keep_chrome_open", True):
+            self._pw = sync_playwright().start()
+            self._attach_or_launch(profile)
+            return
         self.log.info("      Starting Chrome (automation profile) ...")
         self._pw = sync_playwright().start()
         kwargs = dict(user_data_dir=str(profile), headless=False, accept_downloads=True,
@@ -100,7 +107,76 @@ class BluestarSession:
         self.page = self.ctx.pages[0] if self.ctx.pages else self.ctx.new_page()
         self._install_handlers(self.page)
 
+    # ---- keep Chrome open: attach to the open Bluestar Chrome (CDP), or start it detached once
+    def _cdp_port(self) -> int:
+        return int(self.bcfg.get("chrome_debug_port", 9222))
+
+    def _port_open(self) -> bool:
+        try:
+            with socket.create_connection(("127.0.0.1", self._cdp_port()), timeout=1):
+                return True
+        except OSError:
+            return False
+
+    def _connect(self, wait_s: float = 0):
+        end = time.time() + wait_s
+        while True:
+            if self._port_open():
+                try:
+                    return self._pw.chromium.connect_over_cdp(f"http://127.0.0.1:{self._cdp_port()}", timeout=15_000)
+                except PwError:
+                    pass
+            if time.time() >= end:
+                return None
+            time.sleep(1)
+
+    def _chrome_exe(self) -> str:
+        cands = [self.bcfg.get("chrome_exe") or "",
+                 r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                 str(Path.home() / r"AppData\Local\Google\Chrome\Application\chrome.exe")]
+        exe = next((c for c in cands if c and Path(c).exists()), None)
+        if not exe:
+            raise StepFailed("Google Chrome not found (set bluestar.chrome_exe in config.yaml)")
+        return exe
+
+    def _launch_detached(self, profile: Path):
+        """Start the Bluestar Chrome as an independent process - it stays open after the run."""
+        subprocess.Popen(
+            [self._chrome_exe(), f"--remote-debugging-port={self._cdp_port()}", f"--user-data-dir={profile}",
+             "--start-maximized", "--no-first-run", "--no-default-browser-check", self.bcfg["url"]],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP, close_fds=True)
+
+    def _attach_or_launch(self, profile: Path):
+        browser = self._connect()
+        if browser is not None:
+            self.log.info("      Attached to the open Bluestar Chrome.")
+        else:
+            self.log.info("      Opening the Bluestar Chrome (it stays open after the run) ...")
+            self._launch_detached(profile)
+            browser = self._connect(wait_s=45)
+            if browser is None:
+                raise StepFailed(
+                    "Could not attach to the Bluestar Chrome. If a Bluestar Chrome window is open that was not "
+                    "started by the automation or start_chrome.bat, close it and run again.")
+        self._attached = True
+        self.ctx = browser.contexts[0] if browser.contexts else browser.new_context(accept_downloads=True)
+        self.ctx.set_default_timeout(self.timeout_ms)
+        host = urlparse(self.bcfg["url"]).netloc.lower()
+        self.page = next((p for p in self.ctx.pages if host in (p.url or "").lower()), None)  # reuse Bluestar tab
+        if self.page is None:
+            self.page = self.ctx.new_page()
+        self._install_handlers(self.page)
+
     def close(self):
+        if getattr(self, "_attached", False):        # leave Chrome and the Bluestar tab open, just disconnect
+            try:
+                self._pw and self._pw.stop()
+            except Exception:
+                pass
+            self.ctx = self._pw = self.page = None
+            self._attached = False
+            return
         for closer in (lambda: self.ctx and self.ctx.close(), lambda: self._pw and self._pw.stop()):
             try:
                 closer()
@@ -301,11 +377,41 @@ class BluestarSession:
                 self.dismiss_popups()
                 time.sleep(1)
             else:
+                self.log.info(f"      Visible buttons: {self.visible_button_names()}")
                 raise StepFailed(f"Button '{name}' not found on the Bluestar page")
         if not btn.is_enabled():
             raise StepFailed(f"Button '{name}' is disabled in Bluestar")
         btn.click()
         self.wait_idle()
+
+    def visible_button_names(self, limit: int = 60) -> list[str]:
+        """Diagnostics: texts of the visible buttons (written to the log when a button is missing)."""
+        try:
+            return self.page.evaluate(r"""(limit) => Array.from(document.querySelectorAll('button, [role=button], [role=menuitem]'))
+                .filter(e => e.offsetParent).map(e => ((e.innerText || e.getAttribute('aria-label') || '')
+                .trim().replace(/\s+/g, ' ') + (e.getAttribute('data-dyn-controlname') ? ' [' + e.getAttribute('data-dyn-controlname') + ']' : '')))
+                .filter(t => t).slice(0, limit)""", limit)
+        except PwError:
+            return []
+
+    def row_visible(self, row_index: int) -> bool:
+        cells = self.page.locator(f'[data-amf-grid] [data-amf-row="{row_index}"] [role="gridcell"]')
+        try:
+            return cells.filter(visible=True).count() > 0
+        except PwError:
+            return False
+
+    def scroll_grid(self, delta: int = 250):
+        """Scroll the tagged grid vertically (Bluestar grids only draw the rows in view)."""
+        grid = self.page.locator("[data-amf-grid]").first
+        try:
+            box = grid.bounding_box()
+            if box:
+                self.page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.7)
+                self.page.mouse.wheel(0, delta)
+                time.sleep(0.8)
+        except PwError:
+            pass
 
     def open_tab(self, name: str):
         for loc in (self.page.get_by_role("tab", name=name, exact=True),
@@ -320,9 +426,9 @@ class BluestarSession:
                 continue
 
     def is_visible_text(self, text) -> bool:
+        """True if ANY element with this text is visible (Bluestar keeps hidden copies in the page)."""
         try:
-            loc = self.page.get_by_text(text)
-            return loc.count() > 0 and loc.first.is_visible()
+            return self.page.get_by_text(text).filter(visible=True).count() > 0
         except PwError:
             return False
 
@@ -337,12 +443,32 @@ class BluestarSession:
                 rows.append(r)
         return rows
 
-    def click_grid_cell(self, row_index: int, column: str):
-        """Select a grid row by clicking one of its (non-link) cells."""
-        cell = self.page.locator(f'[data-amf-grid] [data-amf-row="{row_index}"] [data-amf-col="{column}"]')
-        if not cell.count():
-            cell = self.page.locator(f'[data-amf-grid] [data-amf-row="{row_index}"] [role="gridcell"]').last
-        cell.first.click()
+    def click_grid_cell(self, row_index: int, column: str, *alternatives: str):
+        """Select a grid row by clicking one of its visible, non-link cells.
+
+        Bluestar grids do not draw columns that are scrolled out of view horizontally,
+        so the preferred column may be invisible -> fall back to any visible cell.
+        """
+        row = self.page.locator(f'[data-amf-grid] [data-amf-row="{row_index}"]').first
+        try:
+            row.scroll_into_view_if_needed(timeout=5000)
+        except PwError:
+            pass
+        target = None
+        for col in (column, *alternatives):
+            cell = row.locator(f'[data-amf-col="{col}"]')
+            try:
+                if cell.count() and cell.first.is_visible():
+                    target = cell.first
+                    break
+            except PwError:
+                continue
+        if target is None:
+            cells = row.locator('[role="gridcell"]').filter(visible=True).filter(has_not=self.page.locator("a"))
+            if not cells.count():
+                raise StepFailed(f"No visible cell to select grid row {row_index}")
+            target = cells.nth(1) if cells.count() > 1 else cells.first   # skip the tick-box column
+        target.click()
         time.sleep(1)
         self.wait_idle()
 

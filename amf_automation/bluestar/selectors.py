@@ -13,6 +13,7 @@ CTRL_CHECK_OUT = "cmdCheckOut"
 CTRL_VIEW_FILES = "cmdViewFiles"
 CTRL_FILE_INFO = "mibFiles"
 CTRL_BOM_LINES = "mibBOMLines"
+CTRL_OPEN_IN_OFFICE = "SystemDefinedOfficeButton"     # standard Dynamics 365 control name
 
 # Engineering objects list page
 FILTER_BOX_LABELS = ["Filter"]                       # quick filter text box
